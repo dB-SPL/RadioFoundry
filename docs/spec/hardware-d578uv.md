@@ -239,7 +239,7 @@ Audio into the MCU:
 
 | Signal | Path | Notes |
 | --- | --- | --- |
-| Receive audio | PC0, ADC channel 10, biased at mid-scale | that it carries the selected side's demodulated audio is inferred |
+| Receive audio | PC0, ADC channel 10, biased at mid-scale | chip 0's (side A's) demodulated audio, ahead of the squelch and the speaker gate, while chip 1's GPIO bit 6 (register 0x25) is set; flat with it clear (measured). Its level follows chip 0's register 0x44: about four times higher with bit 12 set (the DMR value) than without (the FM value), enough to clip on strong signals. It rises about 6 dB an octave up to about 2.5 kHz |
 | Microphone | none: no ADC input carries it; chip 0 measures it (5.6) | |
 | APRS | the APRS add-on board on the Bluetooth UART (PC10 / PC11) | the board decodes AFSK itself and reports `+APRS:` lines; the MCU never sees the audio |
 
@@ -253,9 +253,9 @@ add-on board:
 | Buffer | 1024 readings (107 ms, 2 KB), read by the radio task every 25 ms as signed 16-bit PCM with the bias tracked out (`drivers/audio/adc_pcm`) |
 | When | the timer runs while the core listens for APRS (an FM channel on the APRS frequency, not transmitting); readings reach the demodulator only while side A receives FM, not in AM and not transmitting |
 
-No DMA: the regular group the DMA would scan is the one the board's other readings share. Whether PC0 carries side A's
-audio while side B also receives, and whether it is there with the squelch closed (the shift register's RX audio gate,
-0x40), is not known.
+No DMA: the regular group the DMA would scan is the one the board's other readings share. RadioFoundry sets chip 1's
+GPIO bit 6 in receive and clears it while transmitting. Whether PC0 still carries side A's audio while side B also
+receives is not known.
 
 ### 3.5 Serial ports and other parts
 
