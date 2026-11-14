@@ -481,7 +481,10 @@ kHz). The calibration's MODU (modulation) bytes feed it.
 The debug link's CHIP_REG ([debuglink.md](debuglink.md) 3.24) uses these numbers: chips 0-3 on pages 0 and 1, every
 register but 0x7F (the page itself); chip 4 is the PA5 trims device (5.5), page 0, registers 0-0xF, write-only. Chip 5
 is a baseband field of up to 4 bytes, MSB first (page = the packet TYPE, register = the field ID); chip 6 is a byte of
-the baseband's DMR_CALL_OPTION (page 0, registers 0-4).
+the baseband's DMR_CALL_OPTION (page 0, registers 0-4). CHIP_REG with a length reads chip 5's fields whole, up to 16
+bytes, such as the identity queries' text. The diagnostics page asks those once (lines 11 and 12),
+for example `sct SCT3258TD hw V2.01.02 sw V2.01.07BA` and `sct id 000021 sn <serial>`. The Packet Interface has no
+command that reads the baseband's flash, so a checksum of its firmware isn't available this way.
 
 RadioFoundry clocks the bus as fast as the pin writes go, with one 1 us wait between the register byte and the data
 (the BK4819's limits: clock to 8 MHz, 1 us from the register byte's last falling edge to the next rising one), and
