@@ -125,17 +125,23 @@ same duty, so the hang is under 0.3 µs.
 
 ## 4. Pick the rate
 
+
 - Slower gives back the range the warm-up takes, down to where flicker shows: check page 3 at a mid level.
 - Check the chosen rate for spurs and desense on receive and transmit before settling on it. A board can use a second
   rate while transmitting.
+- **Do not use a rate below 3000 Hz for normal everyday use.** If you must change the rate downward during TX, you
+  be aware that some users will observe flickering, especially at lower brightness. Aim to keep it above 1250 Hz, an
+  IEEE "high flicker risk" threshold. 
 
 **Example: AT-D878UV.** With a 65 µs warm-up, 3662 Hz loses about 25 % of duty and 1831 Hz about 13 %, against 46 %
 at 7324 Hz.
 
 ## 5. Set the floor
 
-Page 1 at the chosen rate: stop where the screen is as dim as anyone should want. Light below it is no reason to move
-it down.
+Page 1 at the chosen rate: stop where the screen is as dim as anyone should want. No need to go for the minimum
+possible glow, but because there are so many level options, think about a setting that is comfortable for users with
+light sensitivity, in a very dark room, with their eyes adjusted. Go in a closet for a few minutes, and try reading
+text. 
 
 **Example: AT-D878UV.** CV 2137 (52 %) at 7324 Hz, still lit well below it.
 
