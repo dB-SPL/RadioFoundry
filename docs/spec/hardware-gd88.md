@@ -281,6 +281,25 @@ page, DMR on the modem and the SPI NAND. Both run on the bench's radio; FM and D
 
 Not supported yet: the IMU, the headset path on its own, the RTC.
 
+### 13.2 Air interface (`CONFIG_P25`, `CONFIG_NXDN`)
+
+A runs P25 and NXDN on its own HR_C7000: `board.air` and `board.baseband` are the provider and receive tap
+([modem-hrc7000.md](modem-hrc7000.md) 10), under `CONFIG_DMR`. A session runs in DMR, so the main BK4819 keeps its DMR
+set-up, and the transmitter keys through the DMR RF burst sequences in continuous mode: A arms B and raises PTB2 once
+for the whole transmission. B runs none of it (`BOARD_UNSUPPORTED` in `boards/gd88b/config.mk`). Checked on the
+bench's radio against the SDR bench, at the lowest power:
+
+| What | Result |
+|---|---|
+| P25 mode switch, settings, stored channel (`test_p25.py`) | pass |
+| P25 conventional transmit (`test_p25_tx_off_air`, `test_p25_stored_channel_tx`) | header to terminator, LDUs in turn |
+| P25 conventional receive (`test_p25_rx_from_bench`) | pass |
+| NXDN mode switch, settings, stored channel (`test_nxdn.py`) | pass |
+| NXDN receive at 9600 and 4800 bit/s (`test_nxdn_rx_from_bench`) | pass |
+| NXDN transmit at 9600 and 4800 bit/s | from the bench's FM discriminator through `nxdntool disc`: 77 and 39 frames, one call, no CRC failure, no LICH lost |
+
+Not run yet: P25 trunking (`test_p25_trunk_*`), the NXDN scan and speech tests.
+
 ### 13.1 Power levels
 
 Five levels, as on the other handhelds: 100 mW, 500 mW, 1 W, 2.5 W, 5 W (`gd88_tx_levels`,
