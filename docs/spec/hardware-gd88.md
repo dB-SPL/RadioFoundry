@@ -207,7 +207,7 @@ B has no display, keys, power latch or GPS. Pin index as in section 9.
 
 | Function | Pins |
 |---|---|
-| Clock | RadioFoundry keeps B at its loader's 72 MHz (APB 36 MHz) and doesn't reclock it. At 72 MHz the link ran with no bad frames, and FM and DMR keying for A held every PA drive point on time (**HW**). DMR receive and B's voice decode at 72 MHz are untested: the decode's time per frame is not measured (A's encode needs 168 MHz, section 6) |
+| Clock | RadioFoundry keeps B at its loader's 72 MHz (APB 36 MHz) and doesn't reclock it. At 72 MHz the link ran with no bad frames, and FM and DMR keying for A held every PA drive point on time (**HW**). The AMBE+2 decode takes 9.0 ms of each 20 ms frame at 72 MHz (10.5 ms at most, 1000 frames of random bits, none late) (**HW**). A DMR call received on air at 72 MHz is untested |
 | RX band | UHF: PTB8 high, PTB7 low. VHF: the reverse |
 | RX front end | UHF PTB15, VHF PTB14, high = on. **Shared**: A's receiver needs its band's front end too |
 | RX path | **HW** A: PTB1, B: PTB0, high = on, in FM and DMR alike; neither receiver cares about the other's. B's reading of a bench signal rises 53 dB with PTB0 (-108 to -55 dBm), and without it B's floor is about -120 dBm. PTB13 and PTB5 (paired with PTB1 and PTB0 on the board), and PTB11 / PTB12 change neither receiver: held low. All off while transmitting |
