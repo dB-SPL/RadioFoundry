@@ -254,7 +254,7 @@ tools/rfoundry_debug.py --port PORT log --follow
 | `dual.receivers` is 2 in `rfoundry_debug.py view --section features` | `test_second_receiver` |
 | HELLO flags: bit 0 set (B decodes DMR) | |
 | Put the radio on dual watch with two FM channels: B's status (RSSI, noise, active) follows a signal on its channel | TUNE/ACK/STATUS. `ACK` result nonzero: B refused (look at `LOG` messages in the log) |
-| The status LEDs: LED 1 (PTA16) while A transmits, LED 2 (PTB17) while it receives: which one lights, which color | Swap `PIN_LED1`/`PIN_LED2` in `gd88b/pins.h` if reversed. TODO gd88b/pins.h colors |
+| The status LEDs: red (PTA16) while A transmits, green (PTB17) while it receives: which one lights, which color | Swap `PIN_LED_RED`/`PIN_LED_GREEN` in `gd88b/pins.h` if reversed. TODO gd88b/pins.h colors |
 | Pull B out of the link (restart it from the debug link: `rx2 restart`): A finds it again within a few seconds and re-sends TUNE/AUDIO/LED | the 1.5 s down rule and HELLO_REQ |
 
 B's own debug link, through A (`--rx2` sends any command to B; rx2-link.md 2.3). Use it for everything below that is
