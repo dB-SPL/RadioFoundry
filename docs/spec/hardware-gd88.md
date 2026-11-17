@@ -281,25 +281,6 @@ page, DMR on the modem and the SPI NAND. Both run on the bench's radio; FM and D
 
 Not supported yet: the IMU, the headset path on its own, the RTC.
 
-### 13.2 Air interface (`CONFIG_P25`, `CONFIG_NXDN`)
-
-A runs P25 and NXDN on its own HR_C7000: `board.air` and `board.baseband` are the provider and receive tap
-([modem-hrc7000.md](modem-hrc7000.md) 10), under `CONFIG_DMR`. A session runs in DMR, so the main BK4819 keeps its DMR
-set-up, and the transmitter keys through the DMR RF burst sequences in continuous mode: A arms B and raises PTB2 once
-for the whole transmission. B runs none of it (`BOARD_UNSUPPORTED` in `boards/gd88b/config.mk`). Checked on the
-bench's radio against the SDR bench, at the lowest power:
-
-| What | Result |
-|---|---|
-| P25 mode switch, settings, stored channel (`test_p25.py`) | pass |
-| P25 conventional transmit (`test_p25_tx_off_air`, `test_p25_stored_channel_tx`) | header to terminator, LDUs in turn |
-| P25 conventional receive (`test_p25_rx_from_bench`) | pass |
-| NXDN mode switch, settings, stored channel (`test_nxdn.py`) | pass |
-| NXDN receive at 9600 and 4800 bit/s (`test_nxdn_rx_from_bench`) | pass |
-| NXDN transmit at 9600 and 4800 bit/s | from the bench's FM discriminator through `nxdntool disc`: 77 and 39 frames, one call, no CRC failure, no LICH lost |
-
-Not run yet: P25 trunking (`test_p25_trunk_*`), the NXDN scan and speech tests.
-
 ### 13.1 Power levels
 
 Five levels, as on the other handhelds: 100 mW, 500 mW, 1 W, 2.5 W, 5 W (`gd88_tx_levels`,
@@ -335,6 +316,25 @@ The page's rows on the bench radio: 146 MHz 1371 (about 2.2 W) and 2960; 445 MHz
 5.6 W). No cliff at 445 MHz: under the zero point the output stays at a floor of about 0.3 mW down to a drive of 40.
 At 146 MHz it stays under 1 mW from 450 down to 250, the lowest drive measured.
 
+### 13.2 Air interface (`CONFIG_P25`, `CONFIG_NXDN`)
+
+A runs P25 and NXDN on its own HR_C7000: `board.air` and `board.baseband` are the provider and receive tap
+([modem-hrc7000.md](modem-hrc7000.md) 10), under `CONFIG_DMR`. A session runs in DMR, so the main BK4819 keeps its DMR
+set-up, and the transmitter keys through the DMR RF burst sequences in continuous mode: A arms B and raises PTB2 once
+for the whole transmission. B runs none of it (`BOARD_UNSUPPORTED` in `boards/gd88b/config.mk`). Checked on the
+bench's radio against the SDR bench, at the lowest power:
+
+| What | Result |
+|---|---|
+| P25 mode switch, settings, stored channel (`test_p25.py`) | pass |
+| P25 conventional transmit (`test_p25_tx_off_air`, `test_p25_stored_channel_tx`) | header to terminator, LDUs in turn |
+| P25 conventional receive (`test_p25_rx_from_bench`) | pass |
+| NXDN mode switch, settings, stored channel (`test_nxdn.py`) | pass |
+| NXDN receive at 9600 and 4800 bit/s (`test_nxdn_rx_from_bench`) | pass |
+| NXDN transmit at 9600 and 4800 bit/s | from the bench's FM discriminator through `nxdntool disc`: 77 and 39 frames, one call, no CRC failure, no LICH lost |
+
+Not run yet: P25 trunking (`test_p25_trunk_*`), the NXDN scan and speech tests.
+
 ## 14. Remaining unknowns for bring-up
 
 The code marks each with `TODO(gd88)`. The first-day plan that settles them is [gd88-bringup.md](../testing/gd88-bringup.md).
@@ -343,7 +343,7 @@ The code marks each with `TODO(gd88)`. The first-day plan that settles them is [
 2. ~~The output power at each level.~~ Approximate drives from the SDR bench (13.1); a wattmeter check is open.
 3. Chain bit 6 as the broadcast tuner's source, and B's audio source pair.
 4. The front panel's navigation keys, whether PTB12 is the knob's contact.
-5. DAC C on each SoC. On A it is powered and on its pin, and 0 to 4095 leave the RSSI unchanged at 146, 162 and 461 MHz (**HW**): not receive gain; a frequency trim or a transmit role is left.
+5. DAC C on each SoC. On A it is powered and on its pin, and 0 to 4095 leave the RSSI unchanged on VHF and UHF (**HW**): not receive gain; a frequency trim or a transmit role is left.
 6. ~~The NAND's size and B's NAND chip select.~~ TC58CVG1S3HRAIJ, 2048 blocks of 64 2 KB pages on both; B's chip select is PTA18 (section 10).
 7. ~~Calibration items 0x602-0x60B~~: unused, section 7.
 8. Bootloader contents and the IAP packet format on this radio (not captured).
