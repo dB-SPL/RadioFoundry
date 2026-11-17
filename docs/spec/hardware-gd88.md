@@ -96,6 +96,7 @@ GD-88 those balls carry the A↔B link, so they are not available for USB.
 |---|---|
 | Start-up | As on the DM-32UV: VBR 0x00010000 (vector table in SRAM), cache controller 0xE000F000 (cacheable 0x03000000, size code 0x2D) |
 | Clock modes | 24 MHz oscillator, 168 MHz (PLL 24 MHz / 1 x 28 / 2 / 2) and 192 MHz (24 MHz / 2 x 64 / 2 / 2). The XIP flash divider is 2 at 168 MHz and 4 at 192 MHz. Both SoCs alike |
+| A's clock | 168 MHz, needed for DMR transmit: the AMBE+2 encode, run from RAM, takes 13.7 ms of each 20 ms frame (15.4 ms at most) at 168 MHz (**HW**). At 144, 120 and 72 MHz the audio task never caught up and the hang check restarted A at the first key-up (**HW**) |
 | PC command words | `Erase`, `Flash Write`, `Flash Read `, `Record Read` (first 11 bytes), the same words as the DB25-D. `Record Read` returns an identification block: firmware version string, build date, build time, `+DRS-880plus`, `+136-480MHZ+` and two 6-byte fields |
 | USMART console | A build `.021` has the USMART V3.1 debug console; older A builds and the B builds don't. On the DB25-D RadioFoundry loads its RAM stub through the same console without the bootloader ([hardware-db25d.md](hardware-db25d.md)). On the GD-88 that route is not checked on a radio yet, so the web flasher names the build but loads nothing through its console, and offers update mode only |
 
@@ -206,7 +207,7 @@ B has no display, keys, power latch or GPS. Pin index as in section 9.
 
 | Function | Pins |
 |---|---|
-| Clock | RadioFoundry keeps B at its loader's 72 MHz (APB 36 MHz) and doesn't reclock it. At 72 MHz the link ran with no bad frames, and FM and DMR keying for A held every PA drive point on time (**HW**). DMR receive and B's voice decode at 72 MHz are untested |
+| Clock | RadioFoundry keeps B at its loader's 72 MHz (APB 36 MHz) and doesn't reclock it. At 72 MHz the link ran with no bad frames, and FM and DMR keying for A held every PA drive point on time (**HW**). DMR receive and B's voice decode at 72 MHz are untested: the decode's time per frame is not measured (A's encode needs 168 MHz, section 6) |
 | RX band | UHF: PTB8 high, PTB7 low. VHF: the reverse |
 | RX front end | UHF PTB15, VHF PTB14, high = on. **Shared**: A's receiver needs its band's front end too |
 | RX path | **HW** A: PTB1, B: PTB0, high = on, in FM and DMR alike; neither receiver cares about the other's. B's reading of a bench signal rises 53 dB with PTB0 (-108 to -55 dBm), and without it B's floor is about -120 dBm. PTB13 and PTB5 (paired with PTB1 and PTB0 on the board), and PTB11 / PTB12 change neither receiver: held low. All off while transmitting |
