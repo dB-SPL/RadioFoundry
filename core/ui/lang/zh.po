@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 The RadioFoundry Authors
+# Copyright (c) 2026 dB-SPL
 #
 # The radio's strings in 中文 (zh; docs/dev/translating.md). Kept in step with the source by
 # tools/i18n.py --sync: translate the empty msgstr lines; an empty one shows the English.
@@ -3618,6 +3619,11 @@ msgstr "第一份副本"
 msgctxt "SET_VALUE_SFR_RX_DUAL_PATH"
 msgid "Dual-path RX"
 msgstr "双路接收"
+
+#: core/ui/ui_menus.c
+msgctxt "SET_VALUE_KEY_TYPE_NXDN"
+msgid "NXDN Scrambler"
+msgstr "NXDN 加密"
 
 #: core/ui/ui_menus.c core/ui/ui_screens.c
 msgctxt "TITLE_VOLUME"

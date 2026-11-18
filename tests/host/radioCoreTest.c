@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The radio core's state machine (core/radio/radio_sm.c) against a fake board and a fake codeplug
 #include "input/input.h"
 #include "input/keyassign.h"
@@ -4731,7 +4732,11 @@ static void test_ui_settings(void)
 	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 70000) && ui_svc_setting_get(UI_SET_PRIVACY_KEY) == 255);
 	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 42) && ui_svc_setting_get(UI_SET_PRIVACY_KEY) == 42);
 	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_TYPE, 50) &&
-	      ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == DMR_PRIVACY_NUM_TYPES - 1);
+	      ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == (CONFIG_NXDN_SCRAMBLER ? DMR_PRIVACY_NXDN : DMR_PRIVACY_ANYTONE_BP));
+#if CONFIG_NXDN_SCRAMBLER
+	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 0) && ui_svc_setting_get(UI_SET_PRIVACY_KEY) == 1);
+	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 32768) && ui_svc_setting_get(UI_SET_PRIVACY_KEY) == 32767);
+#endif
 	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_TYPE, DMR_PRIVACY_MOTOROLA_BP));
 	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 42));
 	st = settings_begin();
@@ -8299,6 +8304,30 @@ static void test_nxdn(void)
 {
 	test_nxdn_rx();
 	test_nxdn_tx();
+#if CONFIG_NXDN_SCRAMBLER
+	// The radio request must drive the NXDN engine and its transmitted cipher field.
+	setup_codeplug_nxdn();
+	start();
+	nxdn_defaults();
+	aud.feed = true;
+	req(RREQ_ZONE_POS, 2);
+	nfar_begin(true, 1, 2001, false, 1);
+	nxdn_engine_cfg_t cfg = nfar.cfg;
+	cfg.scramble_key = 1234;
+	nxdn_engine_set(&nfar, &cfg);
+	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_TYPE, DMR_PRIVACY_NXDN));
+	CHECK(ui_svc_setting_set(UI_SET_PRIVACY_KEY, 1234));
+	CHECK(ui_svc_privacy(true));
+	CHECK(sm.view.dmr.privacy && sm.privacy_key == 1234);
+	req(RREQ_PTT, 1);
+	run(600);
+	CHECK(nfar_heard.starts == 1 && nfar_heard.call.vcall.cipher == NXDN_CIPHER_SCRAMBLE);
+	req(RREQ_PTT, 0);
+	run(500);
+	req(RREQ_DMR_PRIVACY, 0);
+	CHECK(!sm.view.dmr.privacy);
+	nfar_stop();
+#endif
 	test_nxdn_mode();
 	test_nxdn_stored();
 #if CONFIG_SCAN

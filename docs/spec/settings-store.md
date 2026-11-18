@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 The RadioFoundry Authors -->
+<!-- Copyright (c) 2026 dB-SPL -->
 
 # Settings store and safe flash writes
 
@@ -191,10 +192,10 @@ or when it is blank already; anything else is reported as foreign and left alone
 calibration and the foreign-guarded regions (section 5) are never touched; a reset of those would need its own
 second confirmation and is not offered.
 
-### 3.1 Privacy key slots (the hook for DMR basic privacy)
+### 3.1 Privacy key slots
 
-The key store for `core/dmr/dmrPrivacy.c` (`dmr-voice.md` 5). Four slots, each a key value (`privacy_key[i]`,
-u32: 16 bits are used today by Motorola and Anytone basic privacy, and the slot is wide enough for a 32-bit key
+The key store for DMR basic privacy and the NXDN scrambler (`dmr-voice.md` 5, `nxdn.md` 5). Four slots, each a key value (`privacy_key[i]`,
+u32: up to 16 bits are used by the currently supported key types, and the slot is wide enough for a 32-bit key
 later) and a type (`privacy_type[i]`, `dmrPrivacyType_t`). `privacy_active` picks the slot in use radio-wide: 1 to
 4, or 0 for privacy off. Turning privacy off keeps the key in its slot.
 

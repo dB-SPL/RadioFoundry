@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // Home, quick settings and the boot splash, laid out from the display size (docs/ux/information-architecture.md 3, 5;
 // docs/ux/wireframes). Regions top to bottom: status strip, place, talk target, activity, hint row.
 #include <string.h>
@@ -1903,7 +1904,7 @@ static void air_call_line(const air_call_t *c, const font_t *f, int y)
 	char buf[64], fit[48];
 	sbuf_t b;
 
-	if (c->enc || !c->played) {
+	if (!c->played) {
 		gfx_text_fit(f, c->enc ? TR(CALL_WHY_ENCRYPTED, "Encrypted: not played") :
 			TR(CALL_WHY_OTHER_TG, "Other TG: not played"), gfx_width(), fit, sizeof fit);
 		gfx_text(f, 0, y, fit, ui_col.warn);
@@ -3331,6 +3332,9 @@ uint8_t ui_quick_kind(int pos, const radio_view_t *v)
 		return QT_POWER;
 	if (!v->vfo && pos == 3)
 		return QT_TO_VFO;	// a channel's tile 4 copies it to the VFO; the VFO's stays Mode
+	// NXDN needs an activation path for its stored scrambler key, on channels and the VFO alike.
+	if (v->ch.mode == RADIO_MODE_NXDN && pos == 5 && CONFIG_NXDN_SCRAMBLER)
+		return QT_PRIVACY;
 	uint8_t kind = v->ch.mode == RADIO_MODE_DMR ? dmr[pos] : fm[pos];
 	if (v->vfo && (kind == QT_MONITOR || kind == QT_PRIVACY))
 		return QT_SPLIT;	// the VFO's TX frequency; Monitor stays on its key, privacy on channels

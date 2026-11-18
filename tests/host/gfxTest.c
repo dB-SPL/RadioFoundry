@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // UI drawing on the host: text helpers, row-change flushing, and Home / quick settings rendered at each display
 // class (160x120 and 160x128 color, 128x64 mono, 240x320 layout only), written to out/*.ppm for a look. The 16-color
 // frame buffer (bpp 4: palette, reuse, nearest color, captures) and anti-aliased text.
@@ -227,6 +228,11 @@ static void render_set(const char *cls)
 	// On DMR the same positions hold the DMR tiles (information-architecture.md 5): 3 color code, 8 talk target
 	CHECK(ui_quick_kind(2, &v) == QT_CC && ui_quick_kind(7, &v) == QT_TALK_TO);
 	CHECK(ui_quick_tile(7, &v, &s, label, sizeof label, value, sizeof value) && strncmp(label, "8" TEXT_ALT_OPEN "Talk to", 9) == 0);
+	// NXDN keeps its own quick layout: tile 6 must activate the scrambler key, not the unsupported FM VOX action.
+	v.ch.mode = RADIO_MODE_NXDN;
+	CHECK(ui_quick_kind(5, &v) == (CONFIG_NXDN_SCRAMBLER ? QT_PRIVACY : QT_VOX));
+	v.vfo = true;
+	CHECK(ui_quick_kind(5, &v) == (CONFIG_NXDN_SCRAMBLER ? QT_PRIVACY : QT_VOX));
 
 	// Layout sanity: regions in order and inside the screen
 	const ui_layout_t *L = &ui_layout;

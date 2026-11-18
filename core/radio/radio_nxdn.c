@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // NXDN conventional on a channel, the radio core's side (radio_nxdn.h)
 #include "config.h"
 #if CONFIG_NXDN	// the whole file
@@ -35,6 +36,7 @@ static const radio_nxdn_settings_t defaults = {
 };
 static radio_nxdn_settings_t set;
 static nxdn_engine_t *eng;		// while running
+static uint16_t scramble_key;
 static radio_nxdn_stats_t stats;
 static nxdn_call_stats_t call_base;	// the call layer's counters already counted (they restart with the engine)
 static air_session_stats_t air_base;
@@ -44,6 +46,17 @@ void radio_nxdn_init(void)
 {
 	set = defaults;
 	eng = NULL;
+	scramble_key = 0;
+}
+
+void radio_nxdn_scramble_key(uint16_t key)
+{
+	scramble_key = key <= 32767 ? key : 0;
+	if (eng != NULL && nxdn_engine_tx_state(eng) == AIR_TX_IDLE) {
+		nxdn_engine_cfg_t cfg = eng->cfg;
+		cfg.scramble_key = scramble_key;
+		nxdn_engine_set(eng, &cfg);
+	}
 }
 
 void radio_nxdn_settings(radio_nxdn_settings_t *out)
@@ -98,6 +111,7 @@ static void params(const channel_t *ch, uint16_t number, nxdn_engine_cfg_t *c)
 	nxdn_conv_cfg_t cc;
 
 	memset(c, 0, sizeof(*c));
+	c->scramble_key = scramble_key;
 	c->silence = dmr_ambe_silence;
 	if (number != 0 && nxdn_conv_load(number, ch, &cc)) {
 		// Selective: the channel's group, all and unit calls to us; a channel that calls a unit or all keeps the
@@ -319,6 +333,8 @@ bool radio_nxdn_poll(radio_nxdn_view_t *v)
 	nxdn_engine_view_t ev;
 	radio_nxdn_view_t n;
 
+	if (eng != NULL && nxdn_engine_tx_state(eng) == AIR_TX_IDLE && eng->cfg.scramble_key != scramble_key)
+		radio_nxdn_scramble_key(scramble_key);
 	if (eng == NULL) {
 		n = *v;		// the last call heard stays
 		n.flags = 0;
@@ -358,6 +374,8 @@ static bool nxdn_no_tx(void)
 
 static bool nxdn_tx_prepare(void)
 {
+	if (eng != NULL && nxdn_engine_tx_state(eng) == AIR_TX_IDLE && eng->cfg.scramble_key != scramble_key)
+		radio_nxdn_scramble_key(scramble_key);
 	if (eng == NULL || !nxdn_engine_tx_prepare(eng))
 		return false;
 	voice_tx(true);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // NXDN conventional voice on a channel (docs/spec/nxdn.md 7): the call layer (nxdn.h) on an air interface session
 // (core/air/air_session.h). The radio core begins it on an NXDN channel and ends it on leaving; in between it
 // receives calls, hands their voice frames to a sink, and transmits when the radio core says so. No RTOS call: the
@@ -34,6 +35,7 @@ typedef struct {
 	uint8_t tx_call_type;	// NXDN_CALL_GROUP or NXDN_CALL_INDIVIDUAL
 	uint16_t tx_dst;	// the group or unit we call
 	bool emergency;
+	uint16_t scramble_key;	// 1..32767: NXDN scramble, zero: clear
 	const uint8_t *silence;	// a voice frame of silence (NXDN_EHR_BYTES), from the vocoder
 } nxdn_engine_cfg_t;
 

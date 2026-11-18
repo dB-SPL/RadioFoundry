@@ -287,7 +287,14 @@ To set the key on the radio, open **Settings > Privacy** (**OK**, **7**, **4**).
    Press **OK** again.
 
 The radio keeps the key across restarts. Setting the type back to Off removes the key and turns privacy off. The codeplug
-can't hold privacy keys yet. Developers can also load a key over USB with the debug tool:
+can't hold privacy keys yet.
+
+For an NXDN channel, select **NXDN Scrambler** and enter a decimal key from 1 to 32767. Turn Privacy on for the
+channel to transmit scrambled voice and receive scrambled calls with that key. This supports both NXDN48 and NXDN96
+half-rate voice. Other participants need the same key. An incorrect key cannot be detected; scrambled voice is not
+authenticated. Interoperability with another radio has not yet been checked on air.
+
+Developers can also load a DMR key over USB with the debug tool:
 
 ```
 tools/rfoundry_debug.py radio privacy moto 5          # Motorola basic privacy, key 5

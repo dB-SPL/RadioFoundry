@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The radio core's state machine: channel / zone / VFO selection, software squelch, PTT checks and the TX timer,
 // and the everyday features around them (docs/spec/radio-features.md): scan, busy channel lockout, roger beep and
 // 1750 Hz burst, VOX, beeps, the battery monitor and receiver battery saving.
@@ -1441,7 +1442,7 @@ static void dmr_configure(radio_sm_t *sm)
 #endif
 	bool privacy = false;
 #if CONFIG_DMR_PRIVACY
-	privacy = sm->privacy_type != DMR_PRIVACY_OFF;
+	privacy = sm->privacy_type == DMR_PRIVACY_MOTOROLA_BP || sm->privacy_type == DMR_PRIVACY_ANYTONE_BP;
 	if (privacy) {
 		privacy_key.type = (dmrPrivacyType_t)sm->privacy_type;
 		privacy_key.key = sm->privacy_key;
@@ -5768,6 +5769,10 @@ static void air_begin(radio_sm_t *sm)
 {
 #if CONFIG_NXDN
 	if (sm->view.ch.mode == RADIO_MODE_NXDN) {
+#if CONFIG_NXDN_SCRAMBLER
+		radio_nxdn_scramble_key(sm->privacy_type == DMR_PRIVACY_NXDN ? sm->privacy_key : 0);
+		sm->view.dmr.privacy = sm->privacy_type == DMR_PRIVACY_NXDN;
+#endif
 		radio_nxdn_begin(&sm->view.ch, air_number(sm));
 		radio_nxdn_poll(&sm->view.nxdn);
 		return;
@@ -6681,7 +6686,9 @@ static void apply_prefs(radio_sm_t *sm, const settings_t *st)
 #if CONFIG_DMR_PRIVACY
 	// The privacy key in use, kept in the settings (slot 1 for now; per-channel choice: codeplug-native.md)
 	uint8_t slot = st->privacy_active;
-	if (slot >= 1 && slot <= SETTINGS_PRIVACY_KEYS && st->privacy_type[slot - 1] < DMR_PRIVACY_NUM_TYPES &&
+	if (slot >= 1 && slot <= SETTINGS_PRIVACY_KEYS && st->privacy_key[slot - 1] <= 0xFFFFu &&
+	    (CONFIG_NXDN_SCRAMBLER || st->privacy_type[slot - 1] != DMR_PRIVACY_NXDN) &&
+	    st->privacy_type[slot - 1] < DMR_PRIVACY_NUM_TYPES &&
 	    st->privacy_type[slot - 1] != DMR_PRIVACY_OFF &&
 	    dmrPrivacyKeyIsValid(st->privacy_type[slot - 1], (uint16_t)st->privacy_key[slot - 1])) {
 		sm->privacy_type = st->privacy_type[slot - 1];
@@ -7898,11 +7905,18 @@ void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms)
 	case RREQ_DMR_PRIVACY: {
 		uint8_t type = (uint8_t)(((uint32_t)req->arg >> 16) & 0xFFu);
 		uint16_t key = (uint16_t)req->arg;
-		if (type >= DMR_PRIVACY_NUM_TYPES || (type != DMR_PRIVACY_OFF && !dmrPrivacyKeyIsValid(type, key))) {
+		if (type >= DMR_PRIVACY_NUM_TYPES || (!CONFIG_NXDN_SCRAMBLER && type == DMR_PRIVACY_NXDN) ||
+		    (type != DMR_PRIVACY_OFF && !dmrPrivacyKeyIsValid(type, key))) {
 			break;
 		}
 		sm->privacy_type = type;
 		sm->privacy_key = type != DMR_PRIVACY_OFF ? key : 0;
+#if CONFIG_NXDN_SCRAMBLER
+		if (radio_nxdn_running())
+			radio_nxdn_scramble_key(type == DMR_PRIVACY_NXDN ? key : 0);
+		if (radio_nxdn_running())
+			sm->view.dmr.privacy = type == DMR_PRIVACY_NXDN;
+#endif
 		if (sm->dmr_running) {
 			dmr_configure(sm);
 		}

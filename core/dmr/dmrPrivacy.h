@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 /*
  * DMR voice privacy (static keystream "basic privacy" schemes)
  */
@@ -23,6 +24,7 @@ typedef enum
 	DMR_PRIVACY_OFF = 0,
 	DMR_PRIVACY_MOTOROLA_BP,  // Motorola Basic Privacy, key 1-255
 	DMR_PRIVACY_ANYTONE_BP,   // Anytone 16-bit Basic Privacy, key 0x0000-0xFFFF
+	DMR_PRIVACY_NXDN,         // NXDN 15-bit scrambler, key 1-32767
 	DMR_PRIVACY_NUM_TYPES
 } dmrPrivacyType_t;
 

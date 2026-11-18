@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The NXDN engine (core/nxdn/nxdn_engine.c) and the air interface session under it: two engines on two made-up
 // providers whose transmit queues feed each other's receivers a chunk at a time. A call from one is heard by the
 // other with its fields and its voice in order; an encoder that stalls is covered with silence and never underruns
@@ -12,6 +13,7 @@
 #include <string.h>
 
 #include "nxdn/nxdn_engine.h"
+#include "dmr/ambe/ambeFec.h"
 #include "air/air_syms.h"
 #include "air/air_softmodem.h"
 
@@ -184,8 +186,15 @@ static const nxdn_engine_hooks_t hooks = { h_start, h_update, h_voice, h_end, h_
 static void encode(radio_t *x, uint8_t n)
 {
 	while (n-- && x->enc_made < VMAX) {
-		for (uint8_t k = 0; k < NXDN_EHR_BYTES; k++)
-			x->enc[x->enc_made][k] = (uint8_t)rng();
+		if (x->e.cfg.scramble_key) {
+			uint8_t bits[AMBE_PARAM_BITS];
+			for (uint8_t k = 0; k < AMBE_PARAM_BITS; k++)
+				bits[k] = (uint8_t)(rng() & 1u);
+			ambeFecEncode(bits, x->enc[x->enc_made]);
+		} else {
+			for (uint8_t k = 0; k < NXDN_EHR_BYTES; k++)
+				x->enc[x->enc_made][k] = (uint8_t)rng();
+		}
 		x->enc_made++;
 	}
 }
@@ -259,6 +268,39 @@ static nxdn_engine_cfg_t base_cfg(bool rate9600)
 				  .tx_call_type = NXDN_CALL_GROUP, .tx_dst = 77, .silence = silence };
 
 	return cfg;
+}
+
+static void testSecure(bool rate9600)
+{
+	static const uint8_t valid_silence[9] = { 0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b };
+	nxdn_engine_cfg_t cfg = base_cfg(rate9600);
+	uint16_t found = 0;
+
+	cfg.scramble_key = 0x1234;
+	cfg.silence = valid_silence;
+	begin(0, &cfg, &hooks);
+	begin(1, &cfg, &hooks);
+	over(70, 0, 0);
+	CHECK(r[1].starts == 1 && r[1].call.vcall.cipher == NXDN_CIPHER_SCRAMBLE, "scramble signaling rate %u", rate9600);
+	for (uint16_t i = 0; i < r[1].nvoice; i++) {
+		if (!memcmp(r[1].voice[i], valid_silence, 9))
+			continue;
+		if (found < r[0].enc_made && !memcmp(r[1].voice[i], r[0].enc[found], 9))
+			found++;
+		else
+			CHECK(false, "scramble voice mismatch at %u", i);
+	}
+	CHECK(found > 10, "scrambled voice received rate %u", rate9600);
+	nxdn_engine_end(&r[0].e);
+	nxdn_engine_end(&r[1].e);
+	cfg.scramble_key = 0x1234;
+	begin(0, &cfg, &hooks);
+	cfg.scramble_key = 0;
+	begin(1, &cfg, &hooks);
+	over(30, 0, 0);
+	CHECK(r[1].starts == 0 && r[1].nvoice == 0, "scrambled call held without key rate %u", rate9600);
+	nxdn_engine_end(&r[0].e);
+	nxdn_engine_end(&r[1].e);
 }
 
 static void testCall(bool rate9600)
@@ -681,6 +723,8 @@ static void testSoftModem(void)
 
 int main(void)
 {
+	testSecure(false);
+	testSecure(true);
 	testCall(false);
 	testCall(true);
 	testSquelch();

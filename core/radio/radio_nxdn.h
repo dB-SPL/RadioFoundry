@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // NXDN conventional on a channel, the radio core's side (docs/spec/nxdn.md 6): the engine (core/nxdn/nxdn_engine.h)
 // on the memory it runs in, its voice frames to and from the vocoder the board hosts for DMR (core/dmr/ambe), the
 // channel's NXDN parameters, and a compact view for the radio view. radio_sm.c decides when NXDN runs and keys the
@@ -95,6 +96,7 @@ bool radio_nxdn_running(void);
 void radio_nxdn_retuned(void);
 // The settings changed: the engine takes them (not while transmitting). A new rate starts the engine over
 void radio_nxdn_apply(const channel_t *ch, uint16_t number);
+void radio_nxdn_scramble_key(uint16_t key);
 // Every tick: the view and the counters. True when the view changed
 bool radio_nxdn_poll(radio_nxdn_view_t *v);
 

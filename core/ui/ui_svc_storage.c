@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The ui_svc.h calls storage-cps answers (docs/spec/settings-store.md, core/codeplug editing):
 //   - settings: each UI setting is read from where it is kept across power cycles. The radio core's own settings
 //     (key tones, tone volume, TX timeout, backlight time, battery saver) from radio_get_settings, which the radio
@@ -98,12 +99,14 @@ radio_view_t ui_svc_view;	// ui_svc.h
 // key in use and writes it back to slot 1 itself, so it gets the new one too (type off turns privacy off)
 static void privacy_store(uint8_t type, uint32_t key)
 {
-	if (type >= DMR_PRIVACY_NUM_TYPES) {
+	if (type >= DMR_PRIVACY_NUM_TYPES || (!CONFIG_NXDN_SCRAMBLER && type == DMR_PRIVACY_NXDN)) {
 		type = DMR_PRIVACY_OFF;
 	}
 	if (type == DMR_PRIVACY_MOTOROLA_BP && (key < 1 || key > 255)) {
 		key = key == 0 ? 1 : 255;
 	}
+	if (type == DMR_PRIVACY_NXDN && (key < 1 || key > 32767))
+		key = key == 0 ? 1 : 32767;
 	key &= 0xFFFFu;
 	settings_t *st = settings_begin();
 	st->privacy_type[0] = type;
@@ -335,7 +338,8 @@ int32_t ui_svc_setting_get(uint8_t id)
 #if CONFIG_DMR_PRIVACY
 	case UI_SET_PRIVACY_TYPE:
 		settings_read(&st);
-		return st.privacy_type[0] < DMR_PRIVACY_NUM_TYPES ? st.privacy_type[0] : DMR_PRIVACY_OFF;
+		return st.privacy_type[0] < DMR_PRIVACY_NUM_TYPES &&
+		       (CONFIG_NXDN_SCRAMBLER || st.privacy_type[0] != DMR_PRIVACY_NXDN) ? st.privacy_type[0] : DMR_PRIVACY_OFF;
 	case UI_SET_PRIVACY_KEY:
 		settings_read(&st);
 		return (int32_t)(st.privacy_key[0] & 0xFFFFu);
@@ -487,7 +491,7 @@ bool ui_svc_setting_set(uint8_t id, int32_t value)
 		return true;
 #if CONFIG_DMR_PRIVACY
 	case UI_SET_PRIVACY_TYPE:
-		privacy_store((uint8_t)clamp16(value, 0, DMR_PRIVACY_NUM_TYPES - 1),
+		privacy_store((uint8_t)clamp16(value, 0, CONFIG_NXDN_SCRAMBLER ? DMR_PRIVACY_NXDN : DMR_PRIVACY_ANYTONE_BP),
 			      (uint32_t)ui_svc_setting_get(UI_SET_PRIVACY_KEY));
 		return true;
 	case UI_SET_PRIVACY_KEY:

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The ui_svc.h calls the radio core answers: the talk target and the one-shot target of the focused row
 // (docs/spec/dmr-voice.md), the temporary channel changes (timeslot, color code, mode), the hear all, monitor and VOX
 // latches, privacy with the stored key, scan, key beeps and the radio's settings (docs/spec/radio-features.md).
@@ -182,6 +183,7 @@ bool ui_svc_privacy(bool on)
 	}
 	static settings_t st;	// too big for the UI task's stack
 	settings_read(&st);
+	radio_get_view(&ui_svc_view);
 	for (int pass = 0; pass < 2; pass++) {
 		for (uint8_t i = 0; i < SETTINGS_PRIVACY_KEYS; i++) {
 			if (pass == 0 && i + 1u != st.privacy_active) {
@@ -189,6 +191,10 @@ bool ui_svc_privacy(bool on)
 			}
 			uint8_t type = st.privacy_type[i];
 			uint16_t key = (uint16_t)st.privacy_key[i];
+			if (!CONFIG_NXDN_SCRAMBLER && type == DMR_PRIVACY_NXDN)
+				continue;
+			if (ui_svc_view.ch.mode == RADIO_MODE_NXDN ? type != DMR_PRIVACY_NXDN : type == DMR_PRIVACY_NXDN)
+				continue;
 			if (type != DMR_PRIVACY_OFF && type < DMR_PRIVACY_NUM_TYPES && st.privacy_key[i] <= 0xFFFFu &&
 					dmrPrivacyKeyIsValid((dmrPrivacyType_t)type, key)) {
 				radio_req_dmr_privacy(type, key);

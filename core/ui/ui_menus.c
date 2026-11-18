@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The list screens and the screen table (information-architecture.md 4, 6, 8): the Hub with its six destinations,
 // actions on a station, Contacts, Messages, Recent, Channels, Tools, Settings grouped by intent, the talk target
 // picker, information pages and the one confirmation (factory reset, P7).
@@ -6506,9 +6507,17 @@ static const int16_t v_sfrcwid[] = { 0, 1, 2, 3, 4 };	// radio_cwid_interval_ms 
 static const tr_id_t n_sfrcwid[] = { TRN(VALUE_OFF, "Off"), TRN(VALUE_5_MIN, "5 min"), TRN(VALUE_10_MIN, "10 min"),
 	TRN(VALUE_15_MIN, "15 min"), TRN(VALUE_30_MIN, "30 min") };
 #endif
-static const int16_t v_ptype[] = { 0, 1, 2 };	// dmrPrivacyType_t
+static const int16_t v_ptype[] = { 0, 1, 2
+#if CONFIG_NXDN_SCRAMBLER
+	, 3
+#endif
+};	// dmrPrivacyType_t
 static const tr_id_t n_ptype[] = { TRN(VALUE_OFF, "Off"), TRX(VALUE_MOTOROLA, "Motorola"),
-	TRX(SET_VALUE_KEY_TYPE_ANYTONE, "Anytone") };
+	TRX(SET_VALUE_KEY_TYPE_ANYTONE, "Anytone")
+#if CONFIG_NXDN_SCRAMBLER
+	, TRN(SET_VALUE_KEY_TYPE_NXDN, "NXDN Scrambler")
+#endif
+};
 
 #define TOGGLE(nm, syn_, sid) { nm, syn_, ST_TOGGLE, sid, 0, { { 0, 1, 1, NULL } } }
 #define NUMBER(nm, syn_, sid, lo, hi, st, u) { nm, syn_, ST_NUMBER, sid, 0, { { lo, hi, st, u } } }
@@ -7024,6 +7033,9 @@ static void set_range(const set_item_t *s, int32_t *lo, int32_t *hi)
 	if (s->id == UI_SET_PRIVACY_KEY && ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == 2) {
 		*lo = 0;
 		*hi = 65535;
+	} else if (s->id == UI_SET_PRIVACY_KEY && ui_svc_setting_get(UI_SET_PRIVACY_TYPE) == 3) {
+		*lo = 1;
+		*hi = 32767;
 	}
 
 }
@@ -7167,8 +7179,11 @@ static bool group_key(const input_event_t *ev)
 	if (ev->action >= ACT_DIGIT_0 && ev->action <= ACT_DIGIT_9 &&
 			(ev->gesture == GESTURE_PRESS || ev->gesture == GESTURE_LONG)) {
 		int32_t d = ev->action - ACT_DIGIT_0;
-		int32_t v = set_typed ? set_value * 10 + d : d;
-		set_value = v > hi ? d : v;
+		int64_t v = set_typed ? (int64_t)set_value * 10 + d : d;
+		if (s->id == UI_SET_PRIVACY_KEY)
+			set_value = v > INT32_MAX ? INT32_MAX : (int32_t)v;
+		else
+			set_value = v > hi ? d : (int32_t)v;
 		set_typed = true;
 		if (set_value < lo && set_value * 10 > hi)
 			set_value = lo;	// can't grow into the range any more

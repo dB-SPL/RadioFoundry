@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // The automated UI checks of docs/ux/usability-tests.md 2, in the host simulator:
 // - press budgets: each task flow of docs/ux/task-flows.md as a script on the reference key maps, at most its budget
 //   (impossible on a key map that should have it = failure);
@@ -695,6 +696,11 @@ static const flow_t flows[] = {
 	{ "S privacy key typed", "", "ok 7 4 ok down ok 1 2 3 ok", "set31=1 set32=123", 10, false },
 	{ "S privacy key out of range", "ok 7 4 ok down", "ok 3 0 0 ok", "toast=Not_changed set32=0", 5, false },
 	{ "S privacy key needs a type", "ok 7 4 down", "ok", "toast=Pick_a_key", 1, false },
+#if CONFIG_NXDN_SCRAMBLER
+	{ "S NXDN privacy maximum key", "", "ok 7 4 ok ok ok down ok 3 2 7 6 7 ok", "set31=3 set32=32767", 16, false },
+	{ "S NXDN privacy key too large", "ok 7 4 ok ok ok down", "ok 3 2 7 6 8 ok", "toast=Not_changed set32=0", 7, false },
+	{ "S NXDN privacy key zero", "ok 7 4 ok ok ok down", "ok 0 ok", "toast=Not_changed set32=0", 3, false },
+#endif
 	{ "S number typed", "", "ok 7 3 down down ok 3 ok", "sq=5 set12=3", 8, false },
 	{ "S voice prompts not built", "ok 7 1 down down down down down down down down down", "ok", "toast=Voice_prompts", 1, false },
 	{ "S mode tile in the VFO", "ok 4 up ok", "quick 4", "toast=VFO:_DMR mode=dmr temporary=0 vfo=1", 2, false },

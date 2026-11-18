@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT AND ISC
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // SPDX-FileCopyrightText: 2010 DSD Author (BPK_1_TO_4, from DSD-FME include/bp.h, ISC license, see LICENSES/ISC.txt)
 /*
  * Host tests for the DMR voice privacy module
@@ -209,6 +210,9 @@ static void testSignaling(void)
 	CHECK((lc[1] == 0x10) && (lc[2] == 0x40) && dmrPrivacyLCIsPrivate(lc), "private LC");
 	CHECK((dmrPrivacyFID(DMR_PRIVACY_OFF, 0) == 0) && (dmrPrivacyServiceOptions(DMR_PRIVACY_OFF, 0) == 0), "clear when off");
 	CHECK(dmrPrivacyKeyIsValid(DMR_PRIVACY_MOTOROLA_BP, 0) == false && dmrPrivacyKeyIsValid(DMR_PRIVACY_MOTOROLA_BP, 255), "BP key range");
+	CHECK(!dmrPrivacyKeyIsValid(DMR_PRIVACY_NXDN, 0) && dmrPrivacyKeyIsValid(DMR_PRIVACY_NXDN, 1) &&
+	      dmrPrivacyKeyIsValid(DMR_PRIVACY_NXDN, 32767) && !dmrPrivacyKeyIsValid(DMR_PRIVACY_NXDN, 32768),
+	      "NXDN key range");
 
 	uint8_t burst[27], orig[27];
 	for (int i = 0; i < 27; i++)

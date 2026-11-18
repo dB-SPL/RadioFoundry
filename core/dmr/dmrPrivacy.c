@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT AND ISC
 // Copyright (c) 2026 The RadioFoundry Authors
+// Copyright (c) 2026 dB-SPL
 // SPDX-FileCopyrightText: 2010 DSD Author (MOTOROLA_BP_KEYS, from DSD-FME include/bp.h, ISC license, see LICENSES/ISC.txt)
 /*
  * DMR voice privacy (static keystream "basic privacy" schemes)
@@ -71,6 +72,8 @@ bool dmrPrivacyKeyIsValid(dmrPrivacyType_t type, uint16_t key)
 			return ((key >= 1) && (key <= 255));
 		case DMR_PRIVACY_ANYTONE_BP:
 			return true;
+		case DMR_PRIVACY_NXDN:
+			return key >= 1 && key <= 32767;
 		default:
 			return false;
 	}
@@ -78,7 +81,7 @@ bool dmrPrivacyKeyIsValid(dmrPrivacyType_t type, uint16_t key)
 
 uint16_t dmrPrivacyKeyMax(dmrPrivacyType_t type)
 {
-	return ((type == DMR_PRIVACY_ANYTONE_BP) ? 0xFFFF : 255);
+	return type == DMR_PRIVACY_ANYTONE_BP ? 0xFFFF : type == DMR_PRIVACY_NXDN ? 32767 : 255;
 }
 
 const char *dmrPrivacyTypeName(dmrPrivacyType_t type)
