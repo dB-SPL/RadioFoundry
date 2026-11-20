@@ -47,6 +47,12 @@ typedef enum {
 
 // --- Text messages ---
 int sms_inbox_count(void);
+#if CONFIG_NXDN_DATA
+// The UI's combined inbox. Row handles can be used with the get, read and delete calls below.
+uint16_t sms_inbox_add_nxdn(uint16_t src, uint32_t at_ms, const char *text);
+uint16_t sms_inbox_handle(uint16_t row);
+int sms_inbox_total(bool unread_only);
+#endif
 int sms_inbox_unread(void);
 // Copy message i (0 = newest); false when there is none
 bool sms_inbox_get(int i, dmrDataMessage_t *out);

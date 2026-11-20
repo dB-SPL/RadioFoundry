@@ -2151,6 +2151,19 @@ bool ui_svc_msg_send(uint32_t dst, bool group, const char *text)
 	sim_rec.tx_id = dst;
 	return true;
 }
+#if CONFIG_NXDN_DATA
+bool ui_svc_nxdn_target(uint16_t *dst, bool *group)
+{
+	*dst = 77;
+	*group = true;
+	return view.ch.mode == RADIO_MODE_NXDN;
+}
+
+bool ui_svc_nxdn_send(uint32_t dst, bool group, const char *text)
+{
+	return view.ch.mode == RADIO_MODE_NXDN && ui_svc_msg_send(dst, group, text);
+}
+#endif
 bool ui_svc_aprs_send_message(const char *to, const char *text, uint8_t flags)
 {
 	if (to[0] == '\0')
@@ -2246,7 +2259,7 @@ uint8_t ui_svc_crash_tx_state(void)
 	return crash_sim.tx;
 }
 
-static void add_message(uint32_t src, const char *text)
+static void add_message(uint32_t src, const char *text, bool nxdn)
 {
 	if (n_inbox == 8)
 		n_inbox--;
@@ -2254,6 +2267,7 @@ static void add_message(uint32_t src, const char *text)
 	n_inbox++;
 	memset(&inbox[0], 0, sizeof inbox[0]);
 	inbox[0].m.src = src;
+	inbox[0].m.nxdn = nxdn;
 	inbox[0].m.unread = true;
 	inbox[0].at = now_ms;
 	strcpy(inbox[0].m.name, contact_name(src, false));
@@ -3202,7 +3216,7 @@ static bool run_token(char *t, char *err, size_t len)
 		advance(200);
 		return true;
 	}
-	if (strcmp(t, "msg") == 0 && arg != NULL) {
+	if ((strcmp(t, "msg") == 0 || strcmp(t, "nxmsg") == 0) && arg != NULL) {
 		char text[UI_MSG_TEXT_MAX + 1];
 		unsigned src = 0;
 		if (sscanf(arg, "%u,%143[^\n]", &src, text) != 2) {
@@ -3212,7 +3226,7 @@ static bool run_token(char *t, char *err, size_t len)
 		for (char *p = text; *p; p++)
 			if (*p == '_')
 				*p = ' ';
-		add_message(src, text);
+		add_message(src, text, strcmp(t, "nxmsg") == 0);
 		advance(200);
 		return true;
 	}

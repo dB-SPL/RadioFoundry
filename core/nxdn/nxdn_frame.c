@@ -104,13 +104,17 @@ typedef struct {
 	uint8_t period, g2_keep;	// bit k (MSB first of `period`): G2 of input k in the period is sent
 	uint8_t cols;
 	uint16_t sym0;			// its first symbol in the frame
-	uint8_t coded;			// bits on air
+	uint16_t coded;			// bits on air
 } chan_t;
 
 // SACCH (4.5.2, figure 4.5-4): 26 + 6 + 4 = 36 -> 72 -> punctured 111111 / 110110 -> 60, 5 x 12
 static const chan_t sacch = { 26, 6, CRC6_POLY, 6, 0x36, 12, NXDN_SACCH_SYM, 60 };
 // FACCH1 (figure 4.5-5): 80 + 12 + 4 = 96 -> 192 -> punctured 11 / 01 -> 144, 9 x 16
 static const chan_t facch1 = { 80, 12, CRC12_POLY, 2, 0x01, 16, NXDN_VCH_SYM(0), 144 };
+#if CONFIG_NXDN_DATA
+// TS 1-A Figure 4.5-6: UDCH and FACCH2 share the 29-by-12 interleaver.
+static const chan_t data_channel = { 184, 15, 0x4CC5, 7, 0x5D, 12, NXDN_SACCH_SYM, 348 };
+#endif
 
 static bool g2_kept(const chan_t *c, uint16_t i)
 {
@@ -128,7 +132,8 @@ static uint16_t ileave(const chan_t *c, uint16_t y)
 
 static void chan_put(const chan_t *c, uint8_t *frame, uint16_t sym0, const uint8_t *data)
 {
-	uint8_t in[12] = { 0 }, enc[24];
+	uint8_t in[(NXDN_FEC_STEPS + 7) / 8] = { 0 };
+	uint8_t enc[(2 * NXDN_FEC_STEPS + 7) / 8];
 	uint16_t n = (uint16_t)(c->data_bits + c->crc_width + 4), crc, y = 0;
 
 	for (uint16_t i = 0; i < c->data_bits; i++)
@@ -147,7 +152,7 @@ static void chan_put(const chan_t *c, uint8_t *frame, uint16_t sym0, const uint8
 static int chan_get(const chan_t *c, const uint8_t *hard, const int8_t *soft, uint16_t sym0, nxdn_fec_work_t *w,
 		    uint8_t *data)
 {
-	uint8_t dec[12];
+	uint8_t dec[(NXDN_FEC_STEPS + 7) / 8];
 	uint16_t n = (uint16_t)(c->data_bits + c->crc_width + 4), y = 0, crc;
 	int errs;
 
@@ -164,6 +169,19 @@ static int chan_get(const chan_t *c, const uint8_t *hard, const int8_t *soft, ui
 		bit_put(data, i, bit_get(dec, i));
 	return nxdn_crc(dec, c->data_bits, c->crc_width, c->crc_poly) == crc ? errs : -1;
 }
+
+#if CONFIG_NXDN_DATA
+void nxdn_data_put(uint8_t *frame, const uint8_t in[NXDN_DATA_BYTES])
+{
+	chan_put(&data_channel, frame, data_channel.sym0, in);
+}
+
+int nxdn_data_get(const uint8_t *hard, const int8_t *soft, nxdn_fec_work_t *w,
+		  uint8_t out[NXDN_DATA_BYTES])
+{
+	return chan_get(&data_channel, hard, soft, data_channel.sym0, w, out);
+}
+#endif
 
 void nxdn_sacch_put(uint8_t *frame, const uint8_t in[NXDN_SACCH_BYTES])
 {

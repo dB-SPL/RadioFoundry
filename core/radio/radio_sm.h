@@ -182,6 +182,7 @@ typedef enum {
 	RREQ_P25_SET,		// radio_task.c: the pending P25 settings were copied (radio_p25_set_settings); applied here
 	RREQ_AIR_BENCH,		// the air interface bench (CONFIG_AIR_RAW): arg 1 take the modem, 0 give it back
 	RREQ_AIR_TX,		// ... arg 1 key (arg2: the longest time in ms), 0 unkey
+	RREQ_NXDN_TEXT,
 	RREQ_NXDN_SET,		// radio_task.c: the pending NXDN settings were copied (radio_nxdn_set_settings); applied here
 } radio_req_type_t;
 
@@ -558,6 +559,9 @@ extern radio_t3_view_t radio_t3v;
 void radio_sm_t3_brief(radio_sm_t *sm);
 #endif
 void radio_sm_init(radio_sm_t *sm, uint32_t now_ms);
+#if CONFIG_NXDN_DATA
+void radio_sm_nxdn_text(radio_sm_t *sm, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group, uint32_t now_ms);
+#endif
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms);
 // Every RADIO_POLL_MS: status, squelch, audio, LEDs, TX time-out
 void radio_sm_poll(radio_sm_t *sm, uint32_t now_ms);

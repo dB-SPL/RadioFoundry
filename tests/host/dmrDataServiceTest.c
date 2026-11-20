@@ -2552,6 +2552,28 @@ static void testPrivacy(void)
 }
 #endif
 
+#if CONFIG_NXDN_DATA
+static void testCombinedInbox(void)
+{
+	uint16_t first = sms_inbox_add_nxdn(309, 100, "first");
+	uint16_t second = sms_inbox_add_nxdn(310, 200, "second");
+	dmrDataMessage_t message;
+
+	CHECK(sms_inbox_handle(0) == second && sms_inbox_handle(1) == first);
+	CHECK(sms_inbox_get(first, &message) && message.format == SMS_INBOX_NXDN_FORMAT &&
+	      message.src == 309 && strcmp(message.text, "first") == 0);
+	int unread = sms_inbox_total(true);
+	sms_inbox_mark_read(first);
+	CHECK(sms_inbox_total(true) == unread - 1);
+	CHECK(sms_inbox_delete(second) && !sms_inbox_get(second, &message));
+	for (uint16_t i = 0; i < DMR_DATA_INBOX_SIZE; i++)
+		sms_inbox_add_nxdn(309, 300 + i, "replacement");
+	CHECK(sms_inbox_total(false) == DMR_DATA_INBOX_SIZE && sms_inbox_count() == 0 &&
+	      !sms_inbox_get(first, &message));
+	CHECK(!sms_inbox_get(0, &message) && sms_inbox_get(sms_inbox_handle(0), &message));
+}
+#endif
+
 int main(void)
 {
 	testNoRate34();
@@ -2602,6 +2624,9 @@ int main(void)
 	testTmsOff();
 #endif
 
+#if CONFIG_NXDN_DATA
+	testCombinedInbox();
+#endif
 	printf(failures ? "# FAILED (%d failures)\n" : "# PASSED (%d failures)\n", failures);
 	return failures ? 1 : 0;
 }

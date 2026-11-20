@@ -646,10 +646,12 @@ static void handle_event(const ui_event_t *ev)
 		break;
 	case UI_EV_MESSAGE_SENT:
 		if (ev->ok) {
-			sb_str(&b, ev->index == 1 ? TR(BANNER_SENT_TO, "Sent to ") :
+			sb_str(&b, ev->index != 0 ? TR(BANNER_SENT_TO, "Sent to ") :
 				TR(MSG_BANNER_DELIVERED_TO, "Delivered to "));
 			station(&b, ev);
 			banner(UI_BANNER_RESULT, false, ev->id, title, NULL);
+		} else if (ev->index == 2) {
+			banner(UI_BANNER_RESULT, true, ev->id, TR(MSG_TOAST_SEND_FAILED, "Couldn't send: try again"), NULL);
 		} else {
 			sb_str(&b, TR(BANNER_NO_ANSWER_FROM, "No answer from "));
 			station(&b, ev);

@@ -80,6 +80,36 @@ bool radio_nxdn_take(channel_t *ch);
 // settings'): what scan and dual watch visit
 bool radio_nxdn_receives(const channel_t *ch, uint16_t number);
 void radio_nxdn_settings(radio_nxdn_settings_t *out);		// any task
+#if CONFIG_NXDN_DATA
+#define RADIO_NXDN_TEXT_MAX 100
+typedef struct {
+	uint32_t count, drops;
+	uint8_t last_drop;
+#if CONFIG_NXDN_DATA_DIAG
+	uint16_t src, dst, length;
+	uint8_t ran, call_type, direction, blocks;
+	bool rate9600, ascii;
+	uint8_t text_offset;
+	uint8_t bytes[316];
+#endif
+} radio_nxdn_data_record_t;
+typedef struct {
+	uint16_t src;
+	uint32_t at_ms;
+	char text[RADIO_NXDN_TEXT_MAX + 1];
+} radio_nxdn_text_t;
+bool radio_nxdn_text_pop(radio_nxdn_text_t *out);
+bool radio_nxdn_data_stage(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group);
+void radio_nxdn_data_record(radio_nxdn_data_record_t *out);
+enum {
+	RADIO_NXDN_TEXT_IDLE,
+	RADIO_NXDN_TEXT_SENDING,
+	RADIO_NXDN_TEXT_SENT,
+	RADIO_NXDN_TEXT_FAILED,
+	RADIO_NXDN_TEXT_QUEUED,
+};
+extern volatile uint8_t radio_nxdn_data_tx;
+#endif
 void radio_nxdn_set_settings(const radio_nxdn_settings_t *s);	// radio task (RREQ_NXDN_SET)
 
 // The parameters in force, as settings: false when the engine isn't running. Any task: a read that crosses a change

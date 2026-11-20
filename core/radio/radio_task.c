@@ -61,6 +61,11 @@ static radio_view_t shared_view;	// the published copy, under view_lock
 static radio_p25_settings_t pending_p25;	// radio_req_p25_settings -> the radio task, under view_lock
 #endif
 #if CONFIG_NXDN
+#if CONFIG_NXDN_DATA
+static uint8_t pending_text[RADIO_NXDN_TEXT_MAX];
+static uint16_t pending_text_length;
+static bool ui_text_pending;
+#endif
 static radio_nxdn_settings_t pending_nxdn;	// radio_req_nxdn_settings -> the radio task, under view_lock
 #endif
 #if CONFIG_AIR_RAW
@@ -197,6 +202,18 @@ static void radio_task(void *arg)
 					xSemaphoreGive(view_lock);
 					radio_p25_set_settings(&p);
 					radio_sm_request(&sm, &req, hal_millis());
+#endif
+#if CONFIG_NXDN_DATA
+				} else if (req.type == RREQ_NXDN_TEXT) {
+					uint8_t bytes[RADIO_NXDN_TEXT_MAX];
+					xSemaphoreTake(view_lock, portMAX_DELAY);
+					uint16_t length = pending_text_length;
+					memcpy(bytes, pending_text, length);
+					xSemaphoreGive(view_lock);
+					radio_sm_nxdn_text(&sm, bytes, length, (uint16_t)req.arg, (req.arg & 0x10000) != 0, hal_millis());
+					xSemaphoreTake(view_lock, portMAX_DELAY);
+					pending_text_length = 0;
+					xSemaphoreGive(view_lock);
 #endif
 #if CONFIG_NXDN
 				} else if (req.type == RREQ_NXDN_SET) {
@@ -459,6 +476,43 @@ void radio_req_p25_settings(const radio_p25_settings_t *s)
 }
 #endif
 #if CONFIG_NXDN
+#if CONFIG_NXDN_DATA
+bool radio_req_nxdn_text_to(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group)
+{
+	if (!requests || !view_lock || !length || length > RADIO_NXDN_TEXT_MAX ||
+	    (dst > RADIO_NXDN_UNIT_MAX && !group))
+		return false;
+	for (uint16_t i = 0; i < length; i++)
+		if (bytes[i] < 0x20 || bytes[i] > 0x7E)
+			return false;
+	xSemaphoreTake(view_lock, portMAX_DELAY);
+	bool queued = false;
+	if (!pending_text_length && radio_nxdn_data_tx != RADIO_NXDN_TEXT_SENDING &&
+	    !__atomic_load_n(&ui_text_pending, __ATOMIC_ACQUIRE)) {
+		radio_req_t req = { .type = RREQ_NXDN_TEXT, .arg = (int32_t)dst | (group ? 0x10000 : 0) };
+		memcpy(pending_text, bytes, length);
+		pending_text_length = length;
+		queued = xQueueSend(requests, &req, 0) == pdTRUE;
+		if (queued) {
+			radio_nxdn_data_tx = RADIO_NXDN_TEXT_QUEUED;
+			__atomic_store_n(&ui_text_pending, dst != 0, __ATOMIC_RELEASE);
+		} else
+			pending_text_length = 0;
+	}
+	xSemaphoreGive(view_lock);
+	return queued;
+}
+
+uint8_t radio_nxdn_text_result(void)
+{
+	uint8_t state = radio_nxdn_data_tx;
+
+	if (state == RADIO_NXDN_TEXT_SENT || state == RADIO_NXDN_TEXT_FAILED)
+		__atomic_store_n(&ui_text_pending, false, __ATOMIC_RELEASE);
+	return state;
+}
+#endif
+
 void radio_req_nxdn_settings(const radio_nxdn_settings_t *s)
 {
 	if (view_lock == NULL) {

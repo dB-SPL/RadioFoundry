@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "board.h"
+#include "hal_time.h"
 #include "radio/radio_nxdn.h"
 #include "radio/radio_bands.h"
 #include "nxdn/nxdn_engine.h"
@@ -39,6 +40,101 @@ static radio_nxdn_stats_t stats;
 static nxdn_call_stats_t call_base;	// the call layer's counters already counted (they restart with the engine)
 static air_session_stats_t air_base;
 static uint32_t rx_calls_base, tx_calls_base, filler_base, rejects_base;
+
+#if CONFIG_NXDN_DATA
+volatile uint8_t radio_nxdn_data_tx;
+static volatile uint32_t data_seq;
+static radio_nxdn_data_record_t data_record;
+// Single producer (air provider) and single consumer (UI task).
+#define TEXT_RX_SLOTS 4
+static radio_nxdn_text_t text_rx[TEXT_RX_SLOTS];
+static uint8_t text_head, text_tail;
+
+bool radio_nxdn_text_pop(radio_nxdn_text_t *out)
+{
+	uint8_t tail = __atomic_load_n(&text_tail, __ATOMIC_RELAXED);
+
+	if (tail == __atomic_load_n(&text_head, __ATOMIC_ACQUIRE))
+		return false;
+	*out = text_rx[tail];
+	__atomic_store_n(&text_tail, (tail + 1u) % TEXT_RX_SLOTS, __ATOMIC_RELEASE);
+	return true;
+}
+
+static const uint8_t kenwood_prefix[] = { 0x83, 0x00 };
+
+static void data_dropped(uint8_t reason)
+{
+	data_seq++;
+	data_record.drops++;
+	data_record.last_drop = reason;
+	data_seq++;
+}
+
+static void data_received(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600)
+{
+	data_seq++;
+	data_record.count++;
+	bool ascii = length > sizeof kenwood_prefix &&
+		length <= sizeof kenwood_prefix + RADIO_NXDN_TEXT_MAX &&
+		memcmp(packet->bytes, kenwood_prefix, sizeof kenwood_prefix) == 0;
+	for (uint16_t i = sizeof kenwood_prefix; ascii && i < length; i++)
+		ascii = packet->bytes[i] >= 0x20 && packet->bytes[i] <= 0x7E;
+#if CONFIG_NXDN_DATA_DIAG
+	data_record.src = packet->address.src;
+	data_record.dst = packet->address.dst;
+	data_record.call_type = packet->address.call_type;
+	data_record.direction = packet->direction;
+	data_record.ran = packet->ran;
+	data_record.blocks = packet->received;
+	data_record.rate9600 = rate9600;
+	data_record.length = length;
+	data_record.text_offset = ascii ? sizeof kenwood_prefix : 0;
+	data_record.ascii = ascii;
+	memcpy(data_record.bytes, packet->bytes, length);
+#else
+	(void)rate9600;
+#endif
+	if (ascii) {
+		uint16_t text_length = length - sizeof kenwood_prefix;
+		uint8_t head = __atomic_load_n(&text_head, __ATOMIC_RELAXED);
+		uint8_t next = (head + 1u) % TEXT_RX_SLOTS;
+
+		if (next != __atomic_load_n(&text_tail, __ATOMIC_ACQUIRE)) {
+			radio_nxdn_text_t *entry = &text_rx[head];
+			entry->src = packet->address.src;
+			entry->at_ms = hal_millis();
+			memcpy(entry->text, packet->bytes + sizeof kenwood_prefix, text_length);
+			entry->text[text_length] = '\0';
+			__atomic_store_n(&text_head, next, __ATOMIC_RELEASE);
+		}
+	}
+	data_seq++;
+}
+
+void radio_nxdn_data_record(radio_nxdn_data_record_t *out)
+{
+	uint32_t seq = data_seq;
+
+	*out = data_record;
+	if ((seq & 1) || seq != data_seq)
+		memset(out, 0, sizeof *out);
+}
+
+bool radio_nxdn_data_stage(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group)
+{
+	uint8_t payload[RADIO_NXDN_TEXT_MAX + sizeof kenwood_prefix];
+
+	if (!eng || !length || length > RADIO_NXDN_TEXT_MAX)
+		return false;
+	memcpy(payload, kenwood_prefix, sizeof kenwood_prefix);
+	memcpy(payload + sizeof kenwood_prefix, bytes, length);
+	if (!nxdn_engine_data_stage_to(eng, payload, length + sizeof kenwood_prefix, dst, group))
+		return false;
+	radio_nxdn_data_tx = RADIO_NXDN_TEXT_SENDING;
+	return true;
+}
+#endif
 
 void radio_nxdn_init(void)
 {
@@ -205,6 +301,10 @@ bool radio_nxdn_begin(const channel_t *ch, uint16_t number)
 		stats.begin_fails++;
 		return false;
 	}
+#if CONFIG_NXDN_DATA
+	eng->data_received = data_received;
+	eng->data_dropped = data_dropped;
+#endif
 	memset(&call_base, 0, sizeof(call_base));
 	memset(&air_base, 0, sizeof(air_base));
 	rx_calls_base = tx_calls_base = filler_base = rejects_base = 0;
@@ -215,6 +315,10 @@ void radio_nxdn_end(void)
 {
 	if (eng == NULL)
 		return;
+#if CONFIG_NXDN_DATA
+	if (eng->data_sending)
+		radio_nxdn_data_tx = RADIO_NXDN_TEXT_FAILED;
+#endif
 	nxdn_engine_end(eng);	// the provider closed: no hook runs after this
 	ambeVoiceStop();
 	eng = NULL;
@@ -360,13 +464,24 @@ static bool nxdn_tx_prepare(void)
 {
 	if (eng == NULL || !nxdn_engine_tx_prepare(eng))
 		return false;
+#if CONFIG_NXDN_DATA
+	if (eng->data_sending)
+		return true;
+#endif
 	voice_tx(true);
 	return true;
 }
 
 static bool nxdn_tx_go(void)
 {
-	return eng != NULL && nxdn_engine_tx_go(eng);
+	if (eng == NULL)
+		return false;
+	bool started = nxdn_engine_tx_go(eng);
+#if CONFIG_NXDN_DATA
+	if (!started && eng->data_sending)
+		eng->data_aborted = true;
+#endif
+	return started;
 }
 
 static void nxdn_tx_stop(void)
@@ -393,6 +508,11 @@ static uint8_t nxdn_tx_state(void)
 static void nxdn_tx_clear(void)
 {
 	if (eng != NULL) {
+#if CONFIG_NXDN_DATA
+		if (eng->data_sending)
+			radio_nxdn_data_tx = eng->data_aborted || !nxdn_engine_data_queued(eng) ?
+				RADIO_NXDN_TEXT_FAILED : RADIO_NXDN_TEXT_SENT;
+#endif
 		voice_tx(false);
 		nxdn_engine_tx_clear(eng);
 	}

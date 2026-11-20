@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "../config.h"
 #include "../air/air_framer.h"
 #include "../fec/conv.h"
 
@@ -112,11 +113,57 @@ bool nxdn_vcall_parse(const uint8_t *msg, nxdn_vcall_t *v);
 static inline uint8_t nxdn_msg_type(const uint8_t *msg) { return msg[0] & 0x3F; }
 
 // ── Frame fields. hard: the frame (NXDN_FRAME_BYTES), soft: one value per symbol (AIR_SOFT_OUTER at +3) or NULL ──
-// The decoders' memory, the caller's: the Viterbi decisions and the depunctured soft bits of a FACCH1, the longest
+// Caller-owned Viterbi decisions and depunctured soft bits for the longest enabled channel.
+#if CONFIG_NXDN_DATA
+#define NXDN_FEC_STEPS		203
+#define NXDN_DATA_BYTES		23		// SR and 22 layer-3 octets
+#define NXDN_DATA_HEAD_DELAY_FRAMES 10
+#define NXDN_DATA_BLOCK_BYTES	20
+#define NXDN_DATA_MAX_BYTES	316
+#define NXDN_DATA_TEXT_TX_BYTES	120
+#define NXDN_TEXT_MAX_BYTES	100
+
 typedef struct {
-	uint16_t dec[96];
-	int8_t soft[192];
+	uint8_t bytes[NXDN_DATA_MAX_BYTES + 4];
+	uint8_t blocks, pad, received, ran, direction;
+	nxdn_vcall_t address;
+} nxdn_data_packet_t;
+
+typedef enum {
+	NXDN_DATA_IGNORED,
+	NXDN_DATA_PENDING,
+	NXDN_DATA_COMPLETE,
+	NXDN_DATA_BAD_HEADER,
+	NXDN_DATA_BAD_SEQUENCE,
+	NXDN_DATA_BAD_CRC,
+} nxdn_data_result_t;
+
+typedef struct {
+	nxdn_vcall_t address;
+	uint8_t ran, blocks, pad;
+} nxdn_data_tx_t;
+
+bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capacity, const nxdn_vcall_t *address, uint8_t ran,
+		       const uint8_t *bytes, uint16_t length);
+// FACCH2 delay in frame periods remaining before the data header.
+void nxdn_data_head_delay(const nxdn_data_tx_t *packet, uint8_t remaining, uint8_t *frame);
+// Frame index zero is the header. Index blocks + 1 is the release.
+void nxdn_data_frame(const nxdn_data_tx_t *packet, const uint8_t *storage, bool rate9600, uint8_t index, uint8_t *frame);
+// Call only for channel-CRC-verified frames. Clear blocks on loss or session reset.
+nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, uint8_t lich,
+				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length);
+void nxdn_data_put(uint8_t *frame, const uint8_t in[NXDN_DATA_BYTES]);
+#else
+#define NXDN_FEC_STEPS		96
+#endif
+typedef struct {
+	uint16_t dec[NXDN_FEC_STEPS];
+	int8_t soft[2 * NXDN_FEC_STEPS];
 } nxdn_fec_work_t;
+#if CONFIG_NXDN_DATA
+int nxdn_data_get(const uint8_t *hard, const int8_t *soft, nxdn_fec_work_t *w,
+		  uint8_t out[NXDN_DATA_BYTES]);
+#endif
 
 // FSW and LICH; the rest of the frame is left as it was
 void nxdn_frame_begin(uint8_t *frame, uint8_t lich);

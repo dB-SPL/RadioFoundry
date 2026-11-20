@@ -399,6 +399,140 @@ static void testCalls(void)
 	      "9600: starts %u voice %u facch fails %u", got.starts, got.voice, st.facch_fail);
 }
 
+#if CONFIG_NXDN_DATA
+static void testData(void)
+{
+	static const uint8_t message[] = "NXDN BENCH TEST 1";
+	static const uint8_t header[NXDN_DATA_BYTES] = {
+		0x32, 0x09, 0, 0x22, 0x03, 0xFB, 0, 0x7B, 0, 1, 0x9C,
+	};
+	static const char coded[] =
+		"434000114a400002b20003c7b000081500016248000dbb000044c800060ac80037f0c001a2a4000abd00005";
+	nxdn_vcall_t address = { .call_type = NXDN_CALL_GROUP, .src = 1019, .dst = 123 };
+	nxdn_data_tx_t tx = {0};
+	nxdn_data_packet_t rx = {0};
+	uint8_t tx_bytes[NXDN_DATA_MAX_BYTES + 4];
+	uint8_t frame[NXDN_FRAME_BYTES] = {0}, channel[NXDN_DATA_BYTES];
+	uint16_t length = 0;
+
+	CHECK(nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 50, message, sizeof message - 1), "prepare data");
+	CHECK(tx_bytes[17] == 0 && tx_bytes[18] == 0xB4 && tx_bytes[19] == 0x5E && tx_bytes[20] == 0x25,
+	      "message CRC fixture");
+	for (uint8_t index = 0; index < 4; index++) {
+		nxdn_data_frame(&tx, tx_bytes, true, index, frame);
+		CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0, "decode data frame %u", index);
+		if (index == 0) {
+			CHECK(memcmp(channel, header, sizeof header) == 0, "header fields");
+			for (uint16_t i = 0; i < sizeof coded - 1; i++) {
+				uint16_t sym = NXDN_SACCH_SYM + 2 * i;
+				uint8_t hi = air_sym_get(frame, sym) ^ (nxdn_pn(sym) << 1);
+				uint8_t lo = air_sym_get(frame, sym + 1) ^ (nxdn_pn(sym + 1) << 1);
+				CHECK("0123456789abcdef"[hi << 2 | lo] == coded[i], "coded nibble %u", i);
+			}
+		}
+		nxdn_data_result_t result = nxdn_data_receive(&rx, true, (uint8_t)nxdn_lich_get(frame, NULL),
+							      channel, &length);
+		CHECK(result == (index < 2 ? NXDN_DATA_PENDING : index == 2 ? NXDN_DATA_COMPLETE : NXDN_DATA_IGNORED),
+		      "receive frame %u", index);
+	}
+	CHECK(length == sizeof message - 1 && memcmp(rx.bytes, message, length) == 0, "verified text");
+
+	static const uint8_t capture[][NXDN_DATA_BYTES] = {
+		{ 0x32, 0x0F, 0, 0x20, 1, 0x2E, 0xFF, 0xFF },
+		{ 0x32, 9, 0, 0x22, 1, 0x2E, 0xFF, 0xFF, 0, 0, 0x1C },
+		{ 0x32, 0x0B, 0, 0x83, 0, 'A', 'A', 'A', '1', '2', '3', '4', 'T', 'E', 'S', 'T',
+		  0xDF, 0x50, 0xBB, 0xF5 },
+		{ 0x32, 8, 0, 0x20, 1, 0x2E, 0xFF, 0xFF },
+	};
+	address.src = 302;
+	address.dst = NXDN_ID_ALL;
+	CHECK(nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 50, capture[2] + 3, 13), "prepare Kenwood AllCall");
+	for (uint8_t remaining = NXDN_DATA_HEAD_DELAY_FRAMES; remaining > 0; remaining--) {
+		uint8_t delay[NXDN_DATA_BYTES];
+
+		memcpy(delay, capture[0], sizeof delay);
+		delay[9] = remaining - 1;
+		nxdn_data_head_delay(&tx, remaining - 1, frame);
+		CHECK(nxdn_lich_get(frame, NULL) == NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH, 0, NXDN_DIR_INBOUND) &&
+		      nxdn_data_get(frame, NULL, &work, channel) >= 0 &&
+		      memcmp(channel, delay, sizeof delay) == 0, "HEAD_DLY count %u", remaining - 1);
+	}
+	for (uint8_t direction = 0; direction <= 1; direction++) {
+		unsigned deliveries = 0;
+
+		for (uint8_t i = 0; i < 4; i++) {
+			uint8_t link = NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH, i == 1 || i == 2 ? 3 : 0, direction);
+
+			if (i) {
+				nxdn_data_frame(&tx, tx_bytes, true, i - 1, frame);
+				CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0 &&
+				      memcmp(channel, capture[i], sizeof channel) == 0, "captured frame %u", i);
+			}
+			if (nxdn_data_receive(&rx, true, link, capture[i], &length) == NXDN_DATA_COMPLETE)
+				deliveries++;
+		}
+		CHECK(deliveries == 1 && length == 13 && memcmp(rx.bytes, capture[2] + 3, 13) == 0,
+		      "captured Kenwood payload, direction %u", direction);
+	}
+	uint8_t inbound = NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH, 3, NXDN_DIR_INBOUND);
+	uint8_t outbound = NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH, 3, NXDN_DIR_OUTBOUND);
+
+	CHECK(nxdn_data_receive(&rx, true, outbound, capture[1], &length) == NXDN_DATA_PENDING,
+	      "accept repeater-out header");
+	CHECK(nxdn_data_receive(&rx, true, inbound, capture[2], &length) == NXDN_DATA_BAD_SEQUENCE,
+	      "reject inbound block in repeater-out fragment");
+	for (uint32_t dst = NXDN_UNIT_MAX + 1u; dst <= NXDN_ID_ALL; dst++) {
+		address.dst = (uint16_t)dst;
+		address.call_type = NXDN_CALL_GROUP;
+		CHECK(nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 50, message, sizeof message - 1), "accept special group %u", dst);
+		nxdn_data_frame(&tx, tx_bytes, true, 0, frame);
+		CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0 &&
+		      nxdn_data_receive(&rx, true, inbound, channel, &length) == NXDN_DATA_PENDING &&
+		      rx.address.dst == dst, "decode special group %u", dst);
+		address.call_type = NXDN_CALL_INDIVIDUAL;
+		CHECK(!nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 50, message, sizeof message - 1), "reject special unit %u", dst);
+	}
+	address.dst = 123;
+	address.src = NXDN_ID_ALL;
+	CHECK(!nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 50, message, sizeof message - 1), "reject AllCall source");
+	address.src = 1019;
+
+	static const uint16_t lengths[] = {1, 16, 17, 100, NXDN_DATA_MAX_BYTES};
+	uint8_t payload[NXDN_DATA_MAX_BYTES];
+
+	for (uint16_t i = 0; i < sizeof payload; i++)
+		payload[i] = (uint8_t)i;
+	address.call_type = NXDN_CALL_INDIVIDUAL;
+	for (size_t i = 0; i < sizeof lengths / sizeof lengths[0]; i++) {
+		CHECK(nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 5, payload, lengths[i]), "prepare length %u", lengths[i]);
+		for (uint8_t index = 0; index <= tx.blocks; index++) {
+			nxdn_data_frame(&tx, tx_bytes, false, index, frame);
+			CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0, "channel CRC at length %u", lengths[i]);
+			CHECK(nxdn_data_receive(&rx, false, (uint8_t)nxdn_lich_get(frame, NULL), channel, &length) ==
+			      (index == tx.blocks ? NXDN_DATA_COMPLETE : NXDN_DATA_PENDING), "sequence %u", index);
+		}
+		CHECK(length == lengths[i] && memcmp(rx.bytes, payload, length) == 0, "payload length %u", lengths[i]);
+	}
+
+	CHECK(nxdn_data_prepare(&tx, tx_bytes, sizeof tx_bytes, &address, 5, message, sizeof message - 1), "prepare invalid burst fixture");
+	nxdn_data_frame(&tx, tx_bytes, false, 0, frame);
+	CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0, "decode second header");
+	uint8_t lich = (uint8_t)nxdn_lich_get(frame, NULL);
+	CHECK(nxdn_data_receive(&rx, false, lich, channel, &length) == NXDN_DATA_PENDING, "accept second header");
+	nxdn_data_frame(&tx, tx_bytes, false, 2, frame);
+	CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0, "decode out-of-order block");
+	CHECK(nxdn_data_receive(&rx, false, lich, channel, &length) == NXDN_DATA_BAD_SEQUENCE, "reject missing block");
+
+	tx_bytes[0] ^= 1; // Channel FEC remains valid while the fragment's CRC now fails.
+	for (uint8_t index = 0; index <= tx.blocks; index++) {
+		nxdn_data_frame(&tx, tx_bytes, false, index, frame);
+		CHECK(nxdn_data_get(frame, NULL, &work, channel) >= 0, "modified fragment has valid channel CRC");
+		CHECK(nxdn_data_receive(&rx, false, lich, channel, &length) ==
+		      (index == tx.blocks ? NXDN_DATA_BAD_CRC : NXDN_DATA_PENDING), "reject bad message CRC");
+	}
+}
+#endif
+
 int main(void)
 {
 	testScrambler();
@@ -408,6 +542,9 @@ int main(void)
 	testVch();
 	testMessages();
 	testCalls();
+#if CONFIG_NXDN_DATA
+	testData();
+#endif
 	printf("nxdnTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }

@@ -20,6 +20,8 @@
 #include "dmr/dmrLrrp.h"
 
 #define DMR_DATA_INBOX_SIZE			4
+#define SMS_INBOX_NXDN_FORMAT UINT8_MAX
+#define SMS_INBOX_HANDLE_FLAG 0x1000u
 #define DMR_DATA_SMS_PREAMBLES		2		// preamble CSBKs before an SMS, gives receivers time to sync
 #define DMR_DATA_TX_PREAMBLES		16		// as many before a text or IP packet where it fits (docs/spec/dmr-data.md 12.6)
 #define DMR_DATA_TEXT_MAX			(sizeof(((dmrDataTMS_t *)0)->text) - 1)
@@ -34,6 +36,9 @@ typedef struct
 	bool     unread;						// not shown on the radio yet
 	uint8_t  format;						// dmr_sms_format_t it came in (a reply goes the same way)
 	char     text[sizeof(((dmrDataTMS_t *)0)->text)];
+#if CONFIG_NXDN_DATA
+	uint16_t handle;
+#endif
 } dmrDataMessage_t;
 
 // Confirmed delivery of IP packets: off, for the destinations and UDP ports in the rules, or every individual packet

@@ -22,7 +22,7 @@ already decoded), `docs/spec/gotchas.md` 3.6-3.9, 5, 7, 14.1.
 | `CONFIG_DMR_LRRP` | LRRP answers (immediate and triggered location requests) |
 | `CONFIG_DMR_SIGNALING` | call alert and radio check CSBKs: answered, and sent by the user |
 | `CONFIG_DMR_EMERGENCY` | the emergency alarm CSBK, sent and heard (`dmr-emergency.md`; the rest of the emergency is in the radio core) |
-| `CONFIG_DMR_DATA_CORE` | derived, on when any of the above is: the packet data core (`core/dmr/dmrData.c`), the service, confirmed data both ways (12) |
+| `CONFIG_DMR_DATA_CORE` | derived from the enabled data features, including NXDN data for the shared inbox. Builds the packet data core (`core/dmr/dmrData.c`), the service and confirmed DMR data both ways (12). |
 | `CONFIG_DMR_UDP_COMPRESS` | compressed UDP/IPv4 headers (SAP 3) on transmit (11) |
 
 All default to on with DMR (`CONFIG_DMR_TMS` follows `CONFIG_DMR_SMS`). A feature switched off is compiled out of the service (`if (!CONFIG_...)` guards,
@@ -416,7 +416,7 @@ frequency has held still (5 s, `ARS_SETTLE_MS`) and turning the knob sends no bu
 
 | Call | |
 |---|---|
-| `sms_inbox_count()`, `sms_inbox_unread()` | inbox size and unread count |
+| `sms_inbox_count()`, `sms_inbox_unread()` | DMR inbox size and unread count. With NXDN data enabled, the radio's Messages screen uses the combined four-entry store. See [NXDN data services](nxdn-data.md#3-kenwood-text). |
 | `sms_inbox_get(i, &msg)`, `sms_inbox_mark_read(i)` | message i, 0 = newest: source, destination, group, time, unread, text |
 | `sms_send(dst, group, text, ack, format)`, `sms_send_state()`, `sms_send_confirmed()` | queue a message (format ETSI_IP, ETSI, TMS or DEFAULT = the setting); state idle / queued / sending / ok / failed; whether the last one done was acknowledged |
 | `dmr_signal_call_alert(dst)`, `dmr_signal_radio_check(dst)`, `dmr_signal_state(&kind, &dst)` | start one; the last one's state |

@@ -439,6 +439,17 @@ uint8_t debuglink_radio_feature_op(uint8_t op, const uint8_t *a, uint16_t len)
 		return DL_ST_UNAVAILABLE;
 #endif
 	}
+	case DL_OP_NXDN_TEXT:
+#if CONFIG_NXDN_DATA
+		if (!len || len > RADIO_NXDN_TEXT_MAX)
+			return DL_ST_BAD_ARG;
+		for (uint16_t i = 0; i < len; i++)
+			if (a[i] < 0x20 || a[i] > 0x7E)
+				return DL_ST_BAD_ARG;
+		return radio_req_nxdn_text(a, len) ? DL_ST_OK : DL_ST_BUSY;
+#else
+		return DL_ST_UNAVAILABLE;
+#endif
 	case DL_OP_NXDN: {
 		// The NXDN settings (radio_nxdn_settings_t, RAM only; docs/spec/debuglink.md 3.8): u8 flags (bit 0: 9600
 		// bit/s, else 4800; bit 1: PTT calls a unit; bit 2: emergency), u8 rx_ran (0 any), u8 tx_ran, u16 rx_gid (0: the

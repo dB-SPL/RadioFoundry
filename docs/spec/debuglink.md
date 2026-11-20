@@ -434,6 +434,27 @@ transmission until burst off, `max_ms` or the TX time-out (see [radio-features.m
 
 Ops 15-18 last until the channel changes (`dmr.target_manual`); in the DMR VFO ops 15 and 16 set the VFO's own target, which is kept. Unavailable ops answer UNAVAILABLE.
 
+#### NXDN text
+
+For [conventional NXDN data](nxdn-data.md), use RADIO operation 44 with 1–100 printable ASCII
+bytes in the request. The firmware adds the Kenwood prefix. The host command is
+`rfoundry_debug.py radio nxdn-text "MESSAGE"`. The request uses the active channel's destination.
+`OK` means queued. `BAD_ARG` means invalid text, `BUSY` means no request slot, and `UNAVAILABLE` means the
+feature is disabled.
+
+| Key in the `nxdn` view | Meaning |
+|---|---|
+| `nxdn.data_tx` | 0 idle, 1 sending, 2 burst complete, 3 refused or aborted, 4 queued. Completion describes local transmission. |
+| `nxdn.data_received`, `nxdn.data_drops` | Counts of verified received payloads and rejected data events. |
+| `nxdn.data_last_drop` | 1 channel CRC, 2 header or unsupported profile, 3 block sequence or early release, 4 message CRC, 5 RAN, 6 destination, 7 sync loss. |
+With `CONFIG_NXDN_DATA_DIAG=y`, these additional keys report the latest verified payload.
+
+| Key in the `nxdn` view | Meaning |
+|---|---|
+| `nxdn.data_rate`, `nxdn.data_ran`, `nxdn.data_src`, `nxdn.data_dst`, `nxdn.data_call_type`, `nxdn.data_direction`, `nxdn.data_blocks` | Metadata for the latest verified, addressed payload. |
+| `nxdn.data_length`, `nxdn.data_hex` | Length and raw application bytes after CRC and padding removal. |
+| `nxdn.data_format`, `nxdn.data_text` | Format is `kenwood` or `binary`. Recognized Kenwood payloads include the extracted text. |
+
 ### 3.9 INFO_CHIP
 
 INFO_CHIP, READ_MEM (3.10) and REBOOT (3.11) go through `board.system` (`hal/hal_system.h`). The fields, ranges and

@@ -8,6 +8,167 @@
 
 #include <string.h>
 
+#if CONFIG_NXDN_DATA
+#define NXDN_MSG_DCALL_HEADER	0x09
+#define NXDN_MSG_DCALL_BLOCK	0x0B
+
+// TS 1-A 9.3: the message CRC covers user bytes before any padding.
+static uint32_t data_crc(const uint8_t *bytes, uint16_t length)
+{
+	uint32_t crc = UINT32_MAX;
+
+	for (uint16_t i = 0; i < length; i++) {
+		crc ^= (uint32_t)bytes[i] << 24;
+		for (uint8_t bit = 0; bit < 8; bit++)
+			crc = (crc << 1) ^ ((crc >> 31) ? UINT32_C(0x04C11DB7) : 0);
+	}
+	return crc;
+}
+
+static bool data_address_valid(const nxdn_vcall_t *address)
+{
+	return address->src && address->src <= NXDN_UNIT_MAX &&
+		address->dst && (address->dst <= NXDN_UNIT_MAX || address->call_type == NXDN_CALL_GROUP) &&
+		(address->call_type == NXDN_CALL_GROUP || address->call_type == NXDN_CALL_INDIVIDUAL);
+}
+
+bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capacity, const nxdn_vcall_t *address, uint8_t ran,
+		       const uint8_t *bytes, uint16_t length)
+{
+	if (length > NXDN_DATA_MAX_BYTES || ran > 63 || !data_address_valid(address))
+		return false;
+	uint8_t blocks = (uint8_t)((length + 4 + NXDN_DATA_BLOCK_BYTES - 1) / NXDN_DATA_BLOCK_BYTES);
+
+	if (blocks * NXDN_DATA_BLOCK_BYTES > capacity)
+		return false;
+	packet->address = *address;
+	packet->ran = ran;
+	packet->blocks = blocks;
+	packet->pad = (uint8_t)(packet->blocks * NXDN_DATA_BLOCK_BYTES - length - 4);
+	if (length)
+		memcpy(storage, bytes, length);
+	uint32_t crc = data_crc(storage, length);
+
+	for (uint8_t i = 0; i < 4; i++)
+		storage[length + i] = (uint8_t)(crc >> (24 - 8 * i));
+	memset(storage + length + 4, 0, packet->pad);
+	return true;
+}
+
+void nxdn_data_head_delay(const nxdn_data_tx_t *packet, uint8_t remaining, uint8_t *frame)
+{
+	uint8_t channel[NXDN_DATA_BYTES] = { packet->ran };
+	uint8_t *msg = channel + 1;
+	nxdn_vcall_t address = packet->address;
+
+	address.msg = NXDN_MSG_TX_REL;
+	address.cc_opt = 0;
+	nxdn_vcall_build(&address, msg, NXDN_DATA_BYTES - 1);
+	msg[0] = 0x0F; // HEAD_DLY (TS 1-A 6.4.1.8)
+	msg[8] = remaining;
+	nxdn_frame_begin(frame, NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH, 0, NXDN_DIR_INBOUND));
+	nxdn_data_put(frame, channel);
+}
+
+void nxdn_data_frame(const nxdn_data_tx_t *packet, const uint8_t *storage, bool rate9600, uint8_t index, uint8_t *frame)
+{
+	uint8_t channel[NXDN_DATA_BYTES] = { packet->ran };
+	uint8_t *msg = channel + 1;
+	bool release = index > packet->blocks;
+
+	if (index == 0 || release) {
+		nxdn_vcall_t address = packet->address;
+
+		address.msg = NXDN_MSG_TX_REL;
+		address.cc_opt = 0;
+		nxdn_vcall_build(&address, msg, NXDN_DATA_BYTES - 1);
+		if (!release) {
+			msg[0] = NXDN_MSG_DCALL_HEADER;
+			msg[2] |= rate9600 ? 2 : 0;
+			msg[8] = packet->blocks - 1;
+			msg[9] = (uint8_t)(packet->pad << 3 | 4);
+		}
+	} else {
+		uint8_t number = packet->blocks - index;
+
+		msg[0] = NXDN_MSG_DCALL_BLOCK;
+		msg[1] = (uint8_t)(number << 4 | number);
+		memcpy(msg + 2, storage + (index - 1) * NXDN_DATA_BLOCK_BYTES, NXDN_DATA_BLOCK_BYTES);
+	}
+	nxdn_frame_begin(frame, NXDN_LICH(NXDN_RF_RDCH, NXDN_USC_UDCH,
+					 release ? 0 : 3, NXDN_DIR_INBOUND));
+	nxdn_data_put(frame, channel);
+}
+
+nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, uint8_t lich,
+				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length)
+{
+	const uint8_t *msg = in + 1;
+	uint8_t type = nxdn_msg_type(msg);
+	uint8_t direction = NXDN_LICH_DIR(lich);
+
+	if (NXDN_LICH_RF(lich) != NXDN_RF_RDCH || NXDN_LICH_USC(lich) != NXDN_USC_UDCH)
+		return NXDN_DATA_IGNORED;
+	if (NXDN_LICH_OPT(lich) == 0) {
+		nxdn_vcall_t release;
+
+		if (packet->blocks && in[0] == packet->ran && direction == packet->direction &&
+		    type == NXDN_MSG_TX_REL && nxdn_vcall_parse(msg, &release) &&
+		    release.src == packet->address.src && release.dst == packet->address.dst &&
+		    release.call_type == packet->address.call_type) {
+			packet->blocks = 0;
+			return NXDN_DATA_BAD_SEQUENCE;
+		}
+		return NXDN_DATA_IGNORED;
+	}
+	if (NXDN_LICH_OPT(lich) != 3)
+		return NXDN_DATA_IGNORED;
+	if (type == NXDN_MSG_DCALL_HEADER) {
+		uint8_t blocks = (msg[8] & 15) + 1;
+		uint8_t pad = msg[9] >> 3;
+		nxdn_vcall_t address = {
+			.call_type = msg[2] >> 5,
+			.src = (uint16_t)(msg[3] << 8 | msg[4]),
+			.dst = (uint16_t)(msg[5] << 8 | msg[6]),
+			.cipher = msg[7] >> 6,
+		};
+
+		packet->blocks = 0;
+		if (in[0] > 63 || msg[1] || (msg[2] & 31) != (rate9600 ? 2 : 0) ||
+		    msg[7] || (msg[8] & 0xF0) || (msg[9] & 7) != 4 || msg[10] ||
+		    pad > NXDN_DATA_BLOCK_BYTES || blocks * NXDN_DATA_BLOCK_BYTES < pad + 4 ||
+		    !data_address_valid(&address))
+			return NXDN_DATA_BAD_HEADER;
+		packet->address = address;
+		packet->blocks = blocks;
+		packet->received = 0;
+		packet->pad = pad;
+		packet->ran = in[0];
+		packet->direction = direction;
+		return NXDN_DATA_PENDING;
+	}
+	if (!packet->blocks)
+		return NXDN_DATA_IGNORED;
+	uint8_t number = packet->blocks - packet->received - 1;
+
+	if (type != NXDN_MSG_DCALL_BLOCK || in[0] != packet->ran || direction != packet->direction ||
+	    msg[1] != (number << 4 | number)) {
+		packet->blocks = 0;
+		return NXDN_DATA_BAD_SEQUENCE;
+	}
+	memcpy(packet->bytes + packet->received * NXDN_DATA_BLOCK_BYTES, msg + 2, NXDN_DATA_BLOCK_BYTES);
+	if (++packet->received != packet->blocks)
+		return NXDN_DATA_PENDING;
+	*length = (uint16_t)(packet->blocks * NXDN_DATA_BLOCK_BYTES - packet->pad - 4);
+	packet->blocks = 0;
+	uint32_t crc = 0;
+
+	for (uint8_t i = 0; i < 4; i++)
+		crc = crc << 8 | packet->bytes[*length + i];
+	return data_crc(packet->bytes, *length) == crc ? NXDN_DATA_COMPLETE : NXDN_DATA_BAD_CRC;
+}
+#endif
+
 static uint8_t bit_get(const uint8_t *p, uint16_t i)
 {
 	return (uint8_t)((p[i >> 3] >> (7 - (i & 7))) & 1);

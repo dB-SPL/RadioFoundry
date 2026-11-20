@@ -79,6 +79,12 @@ WEAK uint8_t ui_svc_home_key(uint8_t action, uint8_t gesture, bool home) { (void
 WEAK bool ui_svc_key_offered(uint8_t id, int32_t value) { (void)id; (void)value; return false; }
 WEAK void ui_svc_apply(uint8_t id, int32_t value) { (void)id; (void)value; }
 
+WEAK uint16_t ui_svc_msg_handle(uint16_t row) { return row; }
+WEAK bool ui_svc_nxdn_target(uint16_t *dst, bool *group) { (void)dst; (void)group; return false; }
+WEAK bool ui_svc_nxdn_send(uint32_t dst, bool group, const char *text)
+{
+	(void)dst; (void)group; (void)text; return false;
+}
 WEAK uint16_t ui_svc_msg_count(void) { return 0; }
 WEAK uint16_t ui_svc_msg_unread(void) { return 0; }
 WEAK bool ui_svc_msg_get(uint16_t i, ui_msg_t *out) { (void)i; (void)out; return false; }

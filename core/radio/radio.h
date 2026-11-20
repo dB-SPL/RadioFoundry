@@ -573,6 +573,14 @@ void radio_req_p25_settings(const radio_p25_settings_t *s);
 #endif
 #if CONFIG_NXDN
 // The NXDN settings (RAM only, radio_nxdn.h): the same
+#if CONFIG_NXDN_DATA
+bool radio_req_nxdn_text_to(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group);
+uint8_t radio_nxdn_text_result(void);
+static inline bool radio_req_nxdn_text(const uint8_t *bytes, uint16_t length)
+{
+	return radio_req_nxdn_text_to(bytes, length, 0, false);
+}
+#endif
 void radio_req_nxdn_settings(const radio_nxdn_settings_t *s);
 #endif
 #if CONFIG_DMR

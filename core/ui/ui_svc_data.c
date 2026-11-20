@@ -5,12 +5,14 @@
 // ui_notify events, which become banners. Built only with the data core; otherwise the weak stubs stay.
 #include "config.h"
 
-#if CONFIG_DMR_DATA_CORE
+#if CONFIG_DMR_DATA_CORE || CONFIG_NXDN_DATA
 #include <string.h>
 #include "ui_svc.h"
 #include "dmr/dmr_data_api.h"
 #include "codeplug/codeplug.h"
 #include "hal_time.h"
+#include "radio/radio.h"
+#include "radio/radio_nxdn.h"
 
 uint32_t ui_svc_feat_data(void)
 {
@@ -28,30 +30,106 @@ static void contact_name(uint32_t id, bool group, char *out, size_t len)
 	}
 }
 
+static dmrDataMessage_t dmr_message; // UI-task scratch
+
+#if CONFIG_NXDN_DATA
+static uint32_t tx_destination;
+
+bool ui_svc_nxdn_target(uint16_t *dst, bool *group)
+{
+	radio_nxdn_settings_t run;
+
+	if (!radio_nxdn_in_force(&run))
+		return false;
+	*dst = run.tx_dst;
+	*group = !run.unit_call;
+	return true;
+}
+
+bool ui_svc_nxdn_send(uint32_t dst, bool group, const char *text)
+{
+	size_t length = strlen(text);
+
+	if (!dst || dst > UINT16_MAX || length > UI_MSG_NXDN_MAX || tx_destination ||
+	    !radio_req_nxdn_text_to((const uint8_t *)text, (uint16_t)length, (uint16_t)dst, group))
+		return false;
+	tx_destination = dst;
+	return true;
+}
+
+static void nxdn_poll(void)
+{
+	static radio_nxdn_text_t message;
+
+	while (radio_nxdn_text_pop(&message)) {
+		uint16_t handle = sms_inbox_add_nxdn(message.src, message.at_ms, message.text);
+		ui_event_t ev = { .kind = UI_EV_MESSAGE, .id = message.src, .index = handle };
+
+		contact_name(message.src, false, ev.name, sizeof ev.name);
+		strncpy(ev.text, message.text, sizeof ev.text - 1);
+		ui_notify(&ev);
+	}
+	if (!tx_destination)
+		return;
+	uint8_t state = radio_nxdn_text_result();
+
+	if (state == RADIO_NXDN_TEXT_SENT || state == RADIO_NXDN_TEXT_FAILED) {
+		ui_event_t ev = { .kind = UI_EV_MESSAGE_SENT, .id = tx_destination,
+				  .ok = state == RADIO_NXDN_TEXT_SENT, .index = 2 };
+
+		tx_destination = 0;
+		ui_notify(&ev);
+	}
+}
+#endif
+
+uint16_t ui_svc_msg_handle(uint16_t row)
+{
+#if CONFIG_NXDN_DATA
+	return sms_inbox_handle(row);
+#else
+	return row;
+#endif
+}
+
 uint16_t ui_svc_msg_count(void)
 {
-	int n = sms_inbox_count();
-	return (uint16_t)(n < 0 ? 0 : n);
+#if CONFIG_NXDN_DATA
+	return (uint16_t)sms_inbox_total(false);
+#else
+	return (uint16_t)sms_inbox_count();
+#endif
 }
 
 uint16_t ui_svc_msg_unread(void)
 {
-	int n = sms_inbox_unread();
-	return (uint16_t)(n < 0 ? 0 : n);
+#if CONFIG_NXDN_DATA
+	return (uint16_t)sms_inbox_total(true);
+#else
+	return (uint16_t)sms_inbox_unread();
+#endif
 }
 
 bool ui_svc_msg_get(uint16_t i, ui_msg_t *out)
 {
-	static dmrDataMessage_t m;	// too big for the UI task's stack
-	if (!sms_inbox_get(i, &m))
+#if CONFIG_NXDN_DATA
+	if (i < SMS_INBOX_HANDLE_FLAG) {
+		i = sms_inbox_handle(i);
+		if (!i)
+			return false;
+	}
+#endif
+	const dmrDataMessage_t *m = &dmr_message;
+	if (!sms_inbox_get(i, &dmr_message))
 		return false;
 	memset(out, 0, sizeof *out);
-	out->src = m.src;
-	out->group = m.group;
-	out->unread = m.unread;
-	out->age_ms = hal_millis() - m.receivedAt;
-	contact_name(m.src, false, out->name, sizeof out->name);
-	strncpy(out->text, m.text, UI_MSG_TEXT_MAX);
+	out->src = m->src;
+	out->group = m->group;
+	out->unread = m->unread;
+	out->nxdn = m->format == SMS_INBOX_NXDN_FORMAT;
+	out->age_ms = hal_millis() - m->receivedAt;
+	contact_name(m->src, false, out->name, sizeof out->name);
+	strncpy(out->text, m->text, UI_MSG_TEXT_MAX);
 	out->text[UI_MSG_TEXT_MAX] = 0;
 	return true;
 }
@@ -99,6 +177,9 @@ bool ui_svc_call_alert(uint32_t id)
 
 void ui_svc_poll(void)
 {
+#if CONFIG_NXDN_DATA
+	nxdn_poll();
+#endif
 #if CONFIG_DMR_EMERGENCY
 	ui_svc_emergency_poll();
 #endif
@@ -114,11 +195,12 @@ void ui_svc_poll(void)
 	ev.id = d.id;
 	switch (d.kind) {
 	case DMR_DATA_EV_SMS_RECEIVED: {
-		ui_msg_t m;
 		ev.kind = UI_EV_MESSAGE;
-		ev.index = 0;	// the newest
-		if (ui_svc_msg_get(0, &m)) {
-			strncpy(ev.text, m.text, sizeof ev.text - 1);
+		if (sms_inbox_get(0, &dmr_message)) {
+#if CONFIG_NXDN_DATA
+			ev.index = dmr_message.handle;
+#endif
+			strncpy(ev.text, dmr_message.text, sizeof ev.text - 1);
 		}
 		break;
 	}

@@ -279,6 +279,37 @@ def test_nxdn_tx_off_air(radio, sdr_bench, pytestconfig, rate):
     check_over(over, rate, TEST_RAN, TEST_UNIT, TEST_GROUP)
 
 
+@pytest.mark.feature("nxdn_data")
+@pytest.mark.radio_tx
+@pytest.mark.parametrize("rate", list(RATES))
+@pytest.mark.needs_switch("VFO")
+def test_nxdn_text_tx(radio, pytestconfig, rate):
+    hz = round(rig(pytestconfig, "nxdn-mhz") * 1e6)
+    view = nxdn_view(radio)
+    if "nxdn.data_tx" not in view:
+        skip("not_built", "built without CONFIG_NXDN_DATA")
+    if (as_int(view.get(f"nxdn.fit{rate}")) or 0) & AIR_FIT_TX == 0:
+        skip("no_hw", f"the radio's air interface can't transmit NXDN at {rate} bit/s")
+    old = settings_of(view)
+    with radio.vfo_session():
+        link = radio.link
+        try:
+            link.vfo_set(hz)
+            radio.wait_for(lambda x: x.get("rx_hz") == str(hz), what="VFO tuned")
+            link.nxdn_settings(rate9600=rate == "9600", tx_ran=TEST_RAN, tx_dst=TEST_GROUP, unit_id=TEST_UNIT)
+            link.dmr_fields(mode="nxdn")
+            view = radio.wait_for(lambda x: x.get("nxdn.on") == "1" and x.get("nxdn.run.rate") == rate,
+                                  sections=("core", "nxdn"), what="NXDN engine configured")
+            assert view.get("tx_hz") == str(hz)
+            radio.lowest_power()
+            tx_calls = int(view["nxdn.tx_calls"])
+            link.radio(44, b"NXDN BENCH TEST 1")
+            radio.wait_for(lambda x: x.get("nxdn.data_tx") == "2" and int(x["nxdn.tx_calls"]) > tx_calls,
+                           3.0, sections=("core", "nxdn"), what="NXDN text burst complete")
+        finally:
+            link.nxdn_settings(**old)
+
+
 def key_over(radio, sdr_bench, mhz, rate, v0):
     """One over of PTT_S at rate, sliced by the bench's 4FSK receiver on mhz. Returns (the job, its last record, how
     much the radio's nxdn.tx_calls and nxdn.tx_underruns grew since the view v0)"""

@@ -7,6 +7,7 @@
 #include "debuglink/debuglink.h"
 #if CONFIG_NXDN
 #include "radio/radio_nxdn.h"
+#include <string.h>
 #endif
 
 void debuglink_view_nxdn(const radio_view_t *v, dl_text_t *t)
@@ -37,6 +38,34 @@ void debuglink_view_nxdn(const radio_view_t *v, dl_text_t *t)
 		dl_text(t, "nxdn.run.unit_id=%u\nnxdn.run.unit_call=%u\nnxdn.run.tx_dst=%u\n", s.unit_id, s.unit_call,
 			s.tx_dst);
 	}
+#if CONFIG_NXDN_DATA
+	radio_nxdn_data_record_t record;
+	radio_nxdn_data_record(&record);
+	dl_text(t, "nxdn.data_tx=%u\nnxdn.data_received=%u\n", radio_nxdn_data_tx, (unsigned)record.count);
+	dl_text(t, "nxdn.data_drops=%u\nnxdn.data_last_drop=%u\n", (unsigned)record.drops, record.last_drop);
+#if CONFIG_NXDN_DATA_DIAG
+	if (record.count) {
+		dl_text(t, "nxdn.data_rate=%u\nnxdn.data_ran=%u\nnxdn.data_src=%u\nnxdn.data_dst=%u\n"
+			"nxdn.data_call_type=%u\nnxdn.data_direction=%u\nnxdn.data_blocks=%u\nnxdn.data_ascii=%u\n",
+			record.rate9600 ? 9600 : 4800, record.ran, record.src, record.dst,
+			record.call_type, record.direction, record.blocks, record.ascii);
+		dl_text(t, "nxdn.data_format=%s\nnxdn.data_length=%u\n",
+			record.ascii ? "kenwood" : "binary", record.length);
+		if (record.ascii) {
+			char message[RADIO_NXDN_TEXT_MAX + 1];
+			uint16_t length = record.length - record.text_offset;
+
+			memcpy(message, record.bytes + record.text_offset, length);
+			message[length] = '\0';
+			dl_text(t, "nxdn.data_text=%s\n", message);
+		}
+		dl_text(t, "nxdn.data_hex=");
+		for (uint16_t i = 0; i < record.length; i++)
+			dl_text(t, "%02x", record.bytes[i]);
+		dl_text(t, "\n");
+	}
+#endif
+#endif
 	radio_nxdn_stats(&c);
 	dl_text(t, "nxdn.begins=%u\nnxdn.begin_fails=%u\nnxdn.rx_calls=%u\nnxdn.tx_calls=%u\nnxdn.tx_filler=%u\n",
 		(unsigned)c.begins, (unsigned)c.begin_fails, (unsigned)c.rx_calls, (unsigned)c.tx_calls,

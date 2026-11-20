@@ -2316,7 +2316,8 @@ static void rxResult(dmrDataRxResult_t result, bool block)
 }
 
 // A received message into the inbox (replacing the oldest when full), announced
-static void inboxStore(uint32_t src, uint32_t dst, bool group, uint8_t seq, uint8_t format, const char *text)
+static uint16_t store_message(uint32_t src, uint32_t dst, bool group, uint8_t seq, uint8_t format,
+			      const char *text, uint32_t at_ms)
 {
 	lock();
 	uint8_t next = (inboxUsed == 0) ? 0 : ((inboxNewest + 1) % DMR_DATA_INBOX_SIZE);
@@ -2325,7 +2326,7 @@ static void inboxStore(uint32_t src, uint32_t dst, bool group, uint8_t seq, uint
 	message->dst = dst;
 	message->group = group;
 	message->seq = seq;
-	message->receivedAt = now;
+	message->receivedAt = at_ms;
 	message->unread = true;
 	message->format = format;
 	strncpy(message->text, text, sizeof(message->text) - 1);
@@ -2335,7 +2336,20 @@ static void inboxStore(uint32_t src, uint32_t dst, bool group, uint8_t seq, uint
 	{
 		inboxUsed++;
 	}
+	uint16_t handle = 0;
+#if CONFIG_NXDN_DATA
+	static uint16_t next_handle;
+
+	handle = SMS_INBOX_HANDLE_FLAG | (next_handle++ & (SMS_INBOX_HANDLE_FLAG - 1u));
+	message->handle = handle;
+#endif
 	unlock();
+	return handle;
+}
+
+static void inboxStore(uint32_t src, uint32_t dst, bool group, uint8_t seq, uint8_t format, const char *text)
+{
+	store_message(src, dst, group, seq, format, text, now);
 	stats.smsReceived++;
 	post(DMR_DATA_EV_SMS_RECEIVED, src);
 }
@@ -2559,18 +2573,24 @@ static void handlePacket(const dmrDataPacket_t *packet)
 
 	// A sender that missed our ACK sends the message again: ACKed again above, but kept (and announced) once. The
 	// sequence number isn't compared: BrandMeister resends an unacknowledged text with a new one (gotcha 5.8)
-	for (int i = 0; i < inboxUsed; i++)
+	lock();
+	for (int i = 0; i < dmrDataServiceMessageCount(); i++)
 	{
 		const dmrDataMessage_t *m = dmrDataServiceMessage(i);
+
+		if (!m)
+			break;
 
 		if ((m->src == packet->src) && (m->dst == packet->dst) && (m->group == packet->group) &&
 				(m->format == format) &&
 				((now - m->receivedAt) < DUPLICATE_MESSAGE_MS) && (strcmp(m->text, tms.text) == 0))
 		{
 			stats.smsDuplicates++;
+			unlock();
 			return;
 		}
 	}
+	unlock();
 
 	inboxStore(packet->src, packet->dst, packet->group, tms.seq, format, tms.text);
 	stats.etsiSmsReceived += (format == DMR_SMS_FORMAT_ETSI) ? 1 : 0;
@@ -2841,19 +2861,50 @@ void dmrDataServiceSetLock(void (*l)(void), void (*u)(void))
 	unlockFn = u;
 }
 
+static dmrDataMessage_t *inbox_at(int row)
+{
+	return &inbox[(inboxNewest + DMR_DATA_INBOX_SIZE - row) % DMR_DATA_INBOX_SIZE];
+}
+
+static int inbox_row(int index)
+{
+#if CONFIG_NXDN_DATA
+	if (index < 0)
+		return -1;
+	for (int row = 0; row < inboxUsed; row++) {
+		const dmrDataMessage_t *m = inbox_at(row);
+
+		if (index & SMS_INBOX_HANDLE_FLAG) {
+			if (m->handle == index)
+				return row;
+		} else if (m->format != SMS_INBOX_NXDN_FORMAT && index-- == 0) {
+			return row;
+		}
+	}
+	return -1;
+#else
+	return index >= 0 && index < inboxUsed ? index : -1;
+#endif
+}
+
 int dmrDataServiceMessageCount(void)
 {
+#if CONFIG_NXDN_DATA
+	int count = 0;
+
+	for (int row = 0; row < inboxUsed; row++)
+		count += inbox_at(row)->format != SMS_INBOX_NXDN_FORMAT;
+	return count;
+#else
 	return inboxUsed;
+#endif
 }
 
 const dmrDataMessage_t *dmrDataServiceMessage(int index)
 {
-	if ((index < 0) || (index >= inboxUsed))
-	{
-		return NULL;
-	}
+	int row = inbox_row(index);
 
-	return &inbox[(inboxNewest + DMR_DATA_INBOX_SIZE - index) % DMR_DATA_INBOX_SIZE];
+	return row >= 0 ? inbox_at(row) : NULL;
 }
 
 void dmrDataServiceGetStats(dmrDataStats_t *out)
@@ -2888,9 +2939,38 @@ const char *dmrDataServiceTxStartingName(void)
 
 // --- dmr_data_api.h: any task ---
 
+#if CONFIG_NXDN_DATA
+uint16_t sms_inbox_add_nxdn(uint16_t src, uint32_t at_ms, const char *text)
+{
+	return store_message(src, 0, false, 0, SMS_INBOX_NXDN_FORMAT, text, at_ms);
+}
+
+uint16_t sms_inbox_handle(uint16_t row)
+{
+	lock();
+	uint16_t handle = row < inboxUsed ? inbox_at(row)->handle : 0;
+	unlock();
+	return handle;
+}
+
+int sms_inbox_total(bool unread_only)
+{
+	lock();
+	int total = 0;
+
+	for (int row = 0; row < inboxUsed; row++)
+		total += !unread_only || inbox_at(row)->unread;
+	unlock();
+	return total;
+}
+#endif
+
 int sms_inbox_count(void)
 {
-	return inboxUsed;
+	lock();
+	int count = dmrDataServiceMessageCount();
+	unlock();
+	return count;
 }
 
 int sms_inbox_unread(void)
@@ -2900,7 +2980,8 @@ int sms_inbox_unread(void)
 	lock();
 	for (int i = 0; i < inboxUsed; i++)
 	{
-		n += dmrDataServiceMessage(i)->unread ? 1 : 0;
+		const dmrDataMessage_t *m = inbox_at(i);
+		n += m->format != SMS_INBOX_NXDN_FORMAT && m->unread;
 	}
 	unlock();
 	return n;
@@ -2937,14 +3018,14 @@ bool sms_inbox_delete(int i)
 	bool ok = false;
 
 	lock();
-	if ((i >= 0) && (i < inboxUsed))
+	int row = inbox_row(i);
+	if (row >= 0)
 	{
 		// Logical index k is inbox[(newest - k) mod N]: each older message moves one place towards the newest, the
 		// oldest slot becomes free (the next message goes to newest + 1, which is that slot once one is free)
-		for (int k = i; k < inboxUsed - 1; k++)
+		for (int k = row; k < inboxUsed - 1; k++)
 		{
-			inbox[(inboxNewest + DMR_DATA_INBOX_SIZE - k) % DMR_DATA_INBOX_SIZE] =
-				inbox[(inboxNewest + DMR_DATA_INBOX_SIZE - (k + 1)) % DMR_DATA_INBOX_SIZE];
+			*inbox_at(k) = *inbox_at(k + 1);
 		}
 		inboxUsed--;
 		dataSerial++;

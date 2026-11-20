@@ -7,6 +7,18 @@ builds with an AFSK transmit path. The [Radio reference](23-radios.md) says whic
 None of them needs the codec. DMR sending needs a DMR channel you may transmit on and your DMR ID; APRS sending
 needs a valid callsign in **Settings > My radio**, an amateur APRS frequency and a board with AFSK transmit.
 
+## NXDN messages
+
+On an NXDN channel with the experimental data feature enabled, open **Messages > Write…** to address the
+channel's configured group or unit. The shared composer accepts up to 100 printable ASCII characters.
+To address a specific contact, highlight it in **Contacts**, press **#**, and select **Message**.
+The contact can be an NXDN unit or group, including special groups and AllCall.
+Received Kenwood-compatible messages appear in **Messages**. Open one and press **#** on an NXDN channel
+to write back to the sender. **Sent** means the radio finished transmitting the unconfirmed burst.
+Kenwood text is experimental. Simplex and conventional repeater channels use the same message format.
+Delivery and display on a stock radio depend on interoperability testing. See
+[NXDN data services](../spec/nxdn-data.md) for the experimental profile.
+
 ## Receiving a message
 
 When a message arrives, the radio shows a banner with the sender and the first words for 8 s. Press **#** while the
@@ -34,16 +46,17 @@ Messages.
    | Call | Makes the sender the talk target for now |
    | Delete | Deletes the message. There is no undo |
 
-**#** on a DMR message opens the actions for its sender. **PTT** in an open DMR message calls the sender. The Call
-action is unavailable for APRS messages, whose sender is a callsign. **#** on an APRS message opens a composer addressed
-to that callsign.
+**#** on a DMR message opens the actions for its sender. **PTT** in an open DMR message calls the sender.
+The Call action is unavailable for NXDN and APRS messages. **#** on an APRS message opens a composer addressed
+to the sender's callsign.
 
 <img src="../ux/screens/160x120i5/messages.png" width="200" alt="Messages">
 <img src="../ux/screens/160x120i5/message_view.png" width="200" alt="A message">
 <img src="../ux/screens/160x120i5/message_long.png" width="200" alt="A long message: the Full message row, and its whole text">
 <img src="../ux/screens/160x120i5/message_read.png" width="200" alt="">
 
-The radio keeps DMR and APRS messages in memory. They are lost when the radio turns off.
+The radio keeps messages in RAM until it turns off. DMR and NXDN share four slots, with the oldest message
+replaced when the inbox is full. APRS keeps its own slots and appears in the same Messages list.
 
 ## Sending a message
 

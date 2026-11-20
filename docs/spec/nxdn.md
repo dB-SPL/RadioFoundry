@@ -3,6 +3,8 @@
 
 # NXDN
 
+See [NXDN data services](nxdn-data.md) for the conventional data transport and Kenwood text profile.
+
 NXDN conventional voice (the NXDN Technical Specifications: TS 1-A Common Air Interface, TS 1-B Basic Operation), on
 the air interface ([air-interface.md](air-interface.md)). Switch: `CONFIG_NXDN`, which also builds the air interface
 ([build-config.md](../build-config.md)). Which radios could carry it: [feature-matrix.md](../feature-matrix.md).
@@ -21,7 +23,8 @@ State:
 | Dual watch | written, host tested: a stored NXDN channel on either side, the receiver alternating onto it ([radio-features.md](radio-features.md) 2.1); not checked on a radio |
 | Channel editor on the radio | written, host tested: RAN, rate, group, unit ID ([ui.md](ui.md) 2.1) |
 | On air | transmit checked off air on a radio at both rates (`test_nxdn_tx_off_air`); receive checked at both rates with a bench transmitter, speech frames through the vocoder included (`test_nxdn_rx_from_bench`, `test_nxdn_rx_speech`); the sound at the speaker is not checked (8) |
-| 9600 bit/s full-rate voice (EFR), data, trunking, encryption | not written (10). Encrypted calls are recognized and not played |
+| Conventional data and Kenwood text | experimental, host tested at both rates. On-air interoperability remains unverified ([NXDN data services](nxdn-data.md)) |
+| 9600 bit/s full-rate voice (EFR), trunking, encryption | not written (10). Encrypted calls are recognized and not played |
 
 ## 1. On air
 
@@ -57,7 +60,7 @@ channel's frames are RDCH (`10`).
 | `00` | SACCH non-superframe: a call's first and last frames |
 | `10` | SACCH superframe: a call's voice frames; four make a superframe |
 | `11` | SACCH superframe whose FACCH1 frame is idle (9600 bit/s, TS 1-B 4.1.2.1) |
-| `01` | UDCH (data): refused |
+| `01` | UDCH or FACCH2 (data): see the [data receive path](nxdn-data.md#2-transport) |
 
 | Steal option | VCH 1-2 | VCH 3-4 |
 |---|---|---|
@@ -296,5 +299,5 @@ scrambler examples), so the codec checks against itself and the clauses only.
 
 ## 10. Not written
 
-Changing an NXDN channel's squelch on the radio, 9600 bit/s full rate, data (UDCH, short data), trunking (RCCH), status and other supplementary messages,
+Changing an NXDN channel's squelch on the radio, 9600 bit/s full rate, other data services (including short data), trunking (RCCH), status and other supplementary messages,
 encryption, a transmit filter in a provider.

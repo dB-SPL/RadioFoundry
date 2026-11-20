@@ -221,7 +221,8 @@ static void act_item(uint16_t i, ui_item_t *it)
 		break;
 	case A_MESSAGE:
 		sb_str(&b, TR(WORD_MESSAGE, "Message"));
-		if (!(feats() & UI_FEAT_SMS))
+		if (!(feats() & UI_FEAT_SMS) &&
+		    !(CONFIG_NXDN_DATA && ui_view()->ch.mode == RADIO_MODE_NXDN))
 			it->flags |= UI_ITEM_DIM;
 		break;
 	case A_CHECK:
@@ -292,7 +293,11 @@ static void act_select(uint16_t i, bool hold)
 		ui_talk(&ui_target, true);
 		break;
 	case A_MESSAGE:
-		if (feats() & UI_FEAT_SMS)
+		if (CONFIG_NXDN_DATA && ui_view()->ch.mode == RADIO_MODE_NXDN) {
+			if (ui_target.group && ui_target.id == 0xFFFFFFu)
+				ui_target.id = UINT16_MAX;	// codeplug AllCall uses the DMR ID width
+			ui_push(SCR_COMPOSE, 2);
+		} else if (feats() & UI_FEAT_SMS)
 			ui_push(SCR_COMPOSE, 0);
 		else
 			ui_toast(TR(WHY_MESSAGES_NOT_IN_BUILD, "Messages: not in this build"));
@@ -383,9 +388,10 @@ static bool aprs_composing;
 #if CONFIG_APRS_AFSK
 static void ui_text_open_to(char *target, uint8_t max);
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA
 static void ui_text_open_message(bool aprs);
 #endif
+static bool nxdn_composing;
 static bool compose_aprs(void) { return aprs_composing; }
 
 void ui_aprs_compose(const char *call)
@@ -425,7 +431,7 @@ static void compose_item(uint16_t i, ui_item_t *it)
 	}
 }
 
-static void send_text(const char *text, bool aprs)
+static void send_text(const char *text, bool aprs, bool nxdn)
 {
 	static char msg[40];
 	char name[24];
@@ -443,8 +449,10 @@ static void send_text(const char *text, bool aprs)
 	} else {
 		ui_sb_target(name, sizeof name, &ui_target);
 	}
-	if (aprs ? !ui_svc_aprs_send_message(aprs_to, text, aprs_message_flags) :
-	    !ui_svc_msg_send(ui_target.id, ui_target.group, text)) {
+	bool sent = aprs ? ui_svc_aprs_send_message(aprs_to, text, aprs_message_flags) :
+		    nxdn ? ui_svc_nxdn_send(ui_target.id, ui_target.group, text) :
+			   ui_svc_msg_send(ui_target.id, ui_target.group, text);
+	if (!sent) {
 		ui_toast(TR(MSG_TOAST_SEND_FAILED, "Couldn't send: try again"));
 		return;
 	}
@@ -470,10 +478,10 @@ static void compose_select(uint16_t i, bool hold)
 	}
 	if (i < CANNED_N) {
 		bool aprs = compose_aprs();
-		send_text(tr(canned[i]), aprs);
+		send_text(tr(canned[i]), aprs, nxdn_composing);
 	}
 	else if (i == CANNED_N) {
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA
 		ui_text_open_message(compose_aprs());
 	#endif
 	} else if (compose_aprs()) {
@@ -494,6 +502,7 @@ static const char *compose_title(void)
 static void compose_enter(void)
 {
 	aprs_composing = ui_frame()->arg == 1u;
+	nxdn_composing = ui_frame()->arg == 2u;
 	str_copy(aprs_to, sizeof aprs_to, compose_aprs() ? aprs_compose_to : "");
 	aprs_compose_to[0] = 0;
 	aprs_message_flags = APRS_MSG_ACK;
@@ -732,7 +741,11 @@ static bool aprs_new_available(void)
 
 static uint16_t msgs_count(void)
 {
-	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u);
+	uint16_t dst;
+	bool group;
+
+	return ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u) +
+		(ui_view()->ch.mode == RADIO_MODE_NXDN && ui_svc_nxdn_target(&dst, &group) ? 1u : 0u);
 }
 
 // Both inboxes are newest first. Merge their small RAM lists by age for the shared Messages screen.
@@ -761,11 +774,17 @@ static bool msg_row(uint16_t row, bool *aprs, uint16_t *index)
 		*aprs = take_aprs;
 		*index = take_aprs ? a++ : d++;
 	}
+	if (!*aprs)
+		*index = ui_svc_msg_handle(*index);
 	return true;
 }
 
 static void msgs_item(uint16_t i, ui_item_t *it)
 {
+	if (i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u)) {
+		str_copy(it->label, sizeof it->label, TR(MSG_ROW_WRITE, "Write..."));
+		return;
+	}
 	uint16_t dmr_count = ui_svc_msg_count();
 	uint16_t aprs_count = ui_svc_aprs_msg_count();
 	if (aprs_new_available() && i == dmr_count + aprs_count) {
@@ -813,7 +832,16 @@ static void msgs_item(uint16_t i, ui_item_t *it)
 static void msgs_select(uint16_t i, bool hold)
 {
 	(void)hold;
-	if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count())
+	uint16_t dst;
+	bool group;
+
+	if (i == ui_svc_msg_count() + ui_svc_aprs_msg_count() + (aprs_new_available() ? 1u : 0u) &&
+	    ui_view()->ch.mode == RADIO_MODE_NXDN && ui_svc_nxdn_target(&dst, &group)) {
+		memset(&ui_target, 0, sizeof ui_target);
+		ui_target.id = dst;
+		ui_target.group = group;
+		ui_push(SCR_COMPOSE, 2);
+	} else if (aprs_new_available() && i == ui_svc_msg_count() + ui_svc_aprs_msg_count())
 		ui_aprs_compose("");
 	else {
 		bool aprs;
@@ -823,7 +851,7 @@ static void msgs_select(uint16_t i, bool hold)
 	}
 }
 
-static void msg_target_of(uint16_t i, ui_target_t *t)
+static bool msg_target_of(uint16_t i, ui_target_t *t)
 {
 	ui_msg_t m;
 	memset(t, 0, sizeof *t);
@@ -831,7 +859,9 @@ static void msg_target_of(uint16_t i, ui_target_t *t)
 		t->id = m.src;
 		strcpy(t->name, m.name);
 		t->saved = m.name[0] != 0;
+		return m.nxdn;
 	}
+	return false;
 }
 
 static void msgs_context(uint16_t i)
@@ -847,8 +877,13 @@ static void msgs_context(uint16_t i)
 		return;
 	}
 	ui_target_t t;
-	msg_target_of(index, &t);
-	ui_open_actions(&t);
+	bool nxdn = msg_target_of(index, &t);
+	if (nxdn && ui_view()->ch.mode == RADIO_MODE_NXDN) {
+		ui_target = t;
+		ui_push(SCR_COMPOSE, 2);
+	} else if (!nxdn && t.id) {
+		ui_open_actions(&t);
+	}
 }
 
 static const ui_scr_def_t messages_screen = {
@@ -904,9 +939,12 @@ static void msg_item(uint16_t i, ui_item_t *it)
 		TRN(MSG_ROW_CALL, "Call"), TRN(MSG_ROW_DELETE, "Delete") };
 	uint8_t a = msg_action(i);
 	str_copy(it->label, sizeof it->label, tr(names[a]));
-	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() && !(feats() & UI_FEAT_SMS))
+	static ui_msg_t message;
+	bool nxdn = !message_aprs() && ui_svc_msg_get(message_index(), &message) && message.nxdn;
+	if ((a == MV_REPLY_OK || a == MV_REPLY_WAY) && !message_aprs() &&
+	    (nxdn ? ui_view()->ch.mode != RADIO_MODE_NXDN : !(feats() & UI_FEAT_SMS)))
 		it->flags |= UI_ITEM_DIM;
-	if (a == MV_CALL && message_aprs())
+	if (a == MV_CALL && (message_aprs() || nxdn))
 		it->flags |= UI_ITEM_DIM;
 }
 
@@ -919,8 +957,7 @@ static void msg_select(uint16_t i, bool hold)
 		return;
 	}
 	i = a;
-	if (!message_aprs())
-		msg_target_of(message_index(), &ui_target);
+	bool nxdn = !message_aprs() && msg_target_of(message_index(), &ui_target);
 	switch (i) {
 	case MV_REPLY_OK:
 	case MV_REPLY_WAY:
@@ -929,14 +966,14 @@ static void msg_select(uint16_t i, bool hold)
 			if (ui_svc_aprs_msg(message_aprs_index(), &m, false)) {
 				str_copy(aprs_to, sizeof aprs_to, m.from);
 				aprs_message_flags = APRS_MSG_ACK;
-				send_text(tr(i == MV_REPLY_OK ? canned[0] : canned[1]), true);
+				send_text(tr(i == MV_REPLY_OK ? canned[0] : canned[1]), true, false);
 			}
-		} else {
-			send_text(tr(i == MV_REPLY_OK ? canned[0] : canned[1]), false);
+		} else if (ui_target.id && (!nxdn || ui_view()->ch.mode == RADIO_MODE_NXDN)) {
+			send_text(tr(i == MV_REPLY_OK ? canned[0] : canned[1]), false, nxdn);
 		}
 		break;
 	case MV_CALL:
-		if (!message_aprs())
+		if (!message_aprs() && !nxdn && ui_target.id)
 			ui_talk(&ui_target, false);
 		break;
 	case MV_DELETE:
@@ -958,8 +995,7 @@ static bool msg_target(uint16_t i, ui_target_t *t)
 	(void)i;
 	if (message_aprs())
 		return false;
-	msg_target_of(message_index(), t);
-	return t->id != 0;
+	return !msg_target_of(message_index(), t) && t->id != 0;
 }
 
 static void msg_context(uint16_t i)
@@ -971,8 +1007,13 @@ static void msg_context(uint16_t i)
 			ui_aprs_compose(m.from);
 	} else {
 		ui_target_t t;
-		msg_target_of(message_index(), &t);
-		ui_open_actions(&t);
+		bool nxdn = msg_target_of(message_index(), &t);
+		if (nxdn && ui_view()->ch.mode == RADIO_MODE_NXDN) {
+			ui_target = t;
+			ui_push(SCR_COMPOSE, 2);
+		} else if (!nxdn && t.id) {
+			ui_open_actions(&t);
+		}
 	}
 }
 
@@ -2084,7 +2125,7 @@ uint8_t ui_menus_zones_moved(ui_frame_t *stack, uint8_t sp, uint32_t from, uint3
 }
 #endif
 
-#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS
+#if CONFIG_CHANNEL_EDIT || CONFIG_APRS_AFSK || CONFIG_DMR_SMS || CONFIG_NXDN_DATA
 // ======================= Text entry: keypad letters (ui.md 2.1) =======================
 // Phone keypad: in ABC / abc, 2-9 cycle their letters, the digit, then the letters in the other case (ABC: A B C 2 a b
 // c); 1 cycles punctuation and 0 a space, 0 and a few signs. The same key within 1 s takes the next one, another key
@@ -2120,17 +2161,18 @@ static void text_open(char *target, uint8_t max, uint8_t screen)
 	ui_push(screen, 0);
 }
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA
 static void message_text_kept(void)
 {
 	if (message_buffer[0] != '\0')
-		send_text(message_buffer, compose_aprs());
+		send_text(message_buffer, compose_aprs(), nxdn_composing);
 }
 
 static void ui_text_open_message(bool aprs)
 {
 	message_buffer[0] = '\0';
-	text_open(message_buffer, aprs ? APRS_MSG_TEXT_MAX : UI_MSG_TEXT_MAX, SCR_MESSAGE_TEXT);
+	text_open(message_buffer, aprs ? APRS_MSG_TEXT_MAX :
+		  nxdn_composing ? UI_MSG_NXDN_MAX : UI_MSG_TEXT_MAX, SCR_MESSAGE_TEXT);
 	text_done = message_text_kept;
 }
 #endif
@@ -2327,7 +2369,7 @@ static const ui_scr_def_t aprs_to_screen = {
 };
 #endif
 
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA
 static const ui_scr_def_t message_text_screen = {
 	.name = "message-text", .flags = 0, .key = text_key_fn, .enter = text_enter, .draw = text_draw,
 };
@@ -7341,7 +7383,7 @@ static const char *set_why_not(const set_item_t *s)
 			feats() & UI_FEAT_EMERGENCY ? NULL :
 				TR(WHY_EMERGENCY_NOT_IN_BUILD, "Emergency: not in this build");
 	case UI_SET_MESSAGE_TONE:
-		return (feats() & UI_FEAT_SMS) || CONFIG_APRS_AFSK ? NULL :
+		return (feats() & UI_FEAT_SMS) || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA ? NULL :
 			TR(WHY_MESSAGES_NOT_IN_BUILD, "Messages: not in this build");
 	case UI_SET_VIBRATE:
 		return feats() & UI_FEAT_VIBRATE ? NULL :
@@ -8064,7 +8106,7 @@ const ui_scr_def_t *const ui_scr[SCR_COUNT] = {
 #if CONFIG_APRS_AFSK
 	[SCR_APRS_TO] = &aprs_to_screen,
 #endif
-#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK
+#if CONFIG_DMR_SMS || CONFIG_APRS_AFSK || CONFIG_NXDN_DATA
 	[SCR_MESSAGE_TEXT] = &message_text_screen,
 #endif
 #if CONFIG_CHANNEL_LIST

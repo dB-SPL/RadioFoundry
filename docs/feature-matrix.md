@@ -52,6 +52,7 @@ is `tools/bringup.py list --radio <id>`.
 | `p25` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial, needs re-run |
 | `p25_trunk` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | not recorded |
 | `nxdn` | not recorded | not recorded | not recorded | not recorded | not written | not recorded | not recorded | partial |
+| `nxdn_data` | off | off | off | off | off | off | off | off |
 | `dmr_voice` | pass (seed) | pass (seed) | pass (seed) | pass (seed) | pass (seed) | not recorded | partial, needs re-run | partial, needs re-run |
 | `dmr_privacy` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | pass, needs re-run | partial, needs re-run |
 | `dmr_data_privacy` | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |
@@ -291,6 +292,8 @@ clock`; ? = not known yet). No driver reads the clock yet ([radio-features.md](s
 | `P25` | ● | ● | ● | ● | … | ● | ● | ● |
 | `P25_TRUNK` | ● | ● | ● | ● | … | ● | ● | ● |
 | `NXDN` | ● | ● | ● | ● | … | ● | ● | ● |
+| `NXDN_DATA` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| `NXDN_DATA_DIAG` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | `AIR_RAW` | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | Voltage reading (board, no switch) | Battery | Battery | Battery | None | Battery | Battery | Supply | Battery |
 | Clock kept through power-off (board, no switch) | Yes | ? | Yes | ? | ? | ? | ? | No (only while on) |
@@ -484,6 +487,21 @@ Flash each network switch costs on the DM-32UV (default minus the build with it 
 service 51,428 (`NET_PPP` or `DMR_IP_GATEWAY` off), TCP and what runs on it 17,028, SNMP 9,116, mDNS 7,220, TFTP
 6,584, HTTP 5,076, rigctld 4,020, APRS-IS 2,964, KISS 688, control station 272. Each TCP connection is about 1.5 KB
 of RAM (TCP, HTTP, rigctld).
+
+#### Experimental NXDN messaging
+
+The following DM-32UV builds use the same optimized source and `CONFIG_NET_TCP=n`. The linker reports total used
+flash and RAM. The messaging costs are relative to the first row. See [NXDN data services](spec/nxdn-data.md).
+
+| Configuration | Flash used (B) | RAM used (B) | Added flash (B) | Added RAM (B) |
+|---|---:|---:|---:|---:|
+| NXDN messaging off | 681,980 | 201,520 | 0 | 0 |
+| NXDN messaging on | 685,652 | 203,120 | 3,672 | 1,600 |
+| NXDN messaging and raw-packet diagnostics on | 686,172 | 203,448 | 4,192 | 1,928 |
+
+The messaging build has 8,336 B of linker RAM headroom. The diagnostic switch adds 520 B of flash and 328 B of
+RAM to that build. Disabling TCP removes the HTTP status server, WebSocket front-panel control, KISS over TCP,
+rigctld and the radio's APRS-IS client. Serial PPP and the UDP services remain available in these builds.
 
 ### DB25-D PRO
 

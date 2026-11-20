@@ -50,7 +50,16 @@ typedef struct {
 	air_session_t session;
 	const air_mode_t *mode;
 	nxdn_call_rx_t rx;
-	nxdn_call_tx_t tx;
+	union {
+		nxdn_call_tx_t tx;
+#if CONFIG_NXDN_DATA
+		struct {
+			nxdn_data_tx_t packet;
+			uint8_t bytes[NXDN_DATA_TEXT_TX_BYTES];
+			uint8_t frame[NXDN_FRAME_BYTES];
+		} data_tx;
+#endif
+	};
 	nxdn_engine_cfg_t cfg;
 	nxdn_engine_hooks_t hooks;
 	void *ctx;
@@ -62,7 +71,37 @@ typedef struct {
 	nxdn_engine_view_t view;
 	uint8_t frame[NXDN_FRAME_BYTES];	// the framer's frame buffer ...
 	int8_t soft[NXDN_FRAME_SYMS];		// ... and its soft values, for the Viterbi decoder
+#if CONFIG_NXDN_DATA
+	nxdn_data_packet_t data_rx;
+	void (*voice_frame)(const nxdn_rx_frame_t *, void *);
+	void (*voice_lost)(void *);
+	void (*data_dropped)(uint8_t reason);
+	void (*data_received)(const nxdn_data_packet_t *, uint16_t, bool);
+	uint8_t data_index, data_offset;
+	bool data_sending, data_aborted;
+#endif
 } nxdn_engine_t;
+#if CONFIG_NXDN_DATA
+enum {
+	NXDN_DROP_CHANNEL_CRC = 1,
+	NXDN_DROP_HEADER,
+	NXDN_DROP_SEQUENCE,
+	NXDN_DROP_MESSAGE_CRC,
+	NXDN_DROP_RAN,
+	NXDN_DROP_DESTINATION,
+	NXDN_DROP_SYNC,
+};
+static inline bool nxdn_engine_data_queued(const nxdn_engine_t *e)
+{
+	// Preamble, delay frames, header, data blocks and release.
+	return e->data_index > NXDN_DATA_HEAD_DELAY_FRAMES + e->data_tx.packet.blocks + 2;
+}
+bool nxdn_engine_data_stage_to(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group);
+static inline bool nxdn_engine_data_stage(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length)
+{
+	return nxdn_engine_data_stage_to(e, bytes, length, 0, false);
+}
+#endif
 
 // The mode for a rate
 const air_mode_t *nxdn_engine_mode(bool rate9600);

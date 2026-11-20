@@ -23,7 +23,10 @@ static bool lich_ok(const air_frame_t *f, int lich)
 {
 	uint8_t inner = 0;
 
-	if (lich < 0 || NXDN_LICH_RF(lich) != NXDN_RF_RDCH || NXDN_LICH_USC(lich) == NXDN_USC_UDCH)
+	if (lich < 0 || NXDN_LICH_RF(lich) != NXDN_RF_RDCH)
+		return false;
+	if (NXDN_LICH_USC(lich) == NXDN_USC_UDCH &&
+	    (!CONFIG_NXDN_DATA || (NXDN_LICH_OPT(lich) != 0 && NXDN_LICH_OPT(lich) != 3)))
 		return false;
 	for (uint8_t i = 0; i < 8; i++) {
 		if (f->soft) {
@@ -43,6 +46,14 @@ static uint16_t rx_head(const air_frame_t *f, void *ctx)
 	int lich = nxdn_lich_get(f->hard, f->soft);
 	bool ok = lich_ok(f, lich);
 
+#if CONFIG_NXDN_DATA
+	if (ok && NXDN_LICH_USC(lich) == NXDN_USC_UDCH) {
+		rx->cur_lich = (int16_t)lich;
+		rx->cur_errs = -1;
+		rx->coasted = 0;
+		return NXDN_FRAME_SYMS;
+	}
+#endif
 	// A frame whose LICH is lost in a fade, in a call's superframes: its voice is still worth trying
 	if (!ok && !(superframe(rx->last_lich) && rx->coasted < COAST_FRAMES))
 		return 0;

@@ -211,6 +211,16 @@ static const flow_t flows[] = {
 	{ "21 text entry in the selected language", "ok 7 2 up ok down ok long:back", "ok 5 ok ok",
 	  "screen=text shows=Nombre", 4, false },
 #endif
+#if CONFIG_NXDN_DATA
+	{ "NXDN sends a canned text to a contact", "dlmode:nxdn", "5 6 3 ctx 3 ok", "sent=1 text=OK screen=home", 6, false },
+	{ "NXDN Messages opens the shared composer", "dlmode:nxdn ok 2", "down ok", "screen=compose shows=TG_77", 2, false },
+	{ "NXDN sends a canned text to the channel group", "dlmode:nxdn ok 2 down ok", "ok", "screen=home sent=1 text=OK txid=77", 1, false },
+	{ "NXDN writes and sends typed text", "dlmode:nxdn ok 2 down ok down down down down ok",
+	  "4 4 wait:1100 4 4 4 ok", "sent=1 text=HI txid=77 screen=home", 6, false },
+	{ "NXDN opens a received text", "dlmode:nxdn nxmsg:309,Hello", "ctx", "screen=message shows=Hello", 1, false },
+	{ "NXDN replies to the sender", "dlmode:nxdn nxmsg:309,Hello ctx ctx", "ok",
+	  "screen=home sent=1 text=OK txid=309", 1, false },
+#endif
 	{ "7 read message, banner up", "msg:9991234,Meet_at_the_north_lot", "ctx", "screen=message", 1, false },
 	{ "7 read message later", "msg:9991234,Meet_at_the_north_lot wait:9000", "ok 2 ok", "screen=message", 3, false },
 	{ "7 short message has no Full message", "msg:9991234,Meet_at_the_north_lot wait:9000 ok 2 ok", "",

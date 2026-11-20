@@ -679,12 +679,51 @@ static void testSoftModem(void)
 	       last_whole >= 0 ? sigmas[last_whole] : -1.0, last_found >= 0 ? sigmas[last_found] : -1.0);
 }
 
+#if CONFIG_NXDN_DATA
+static const uint8_t data_text[] = "NXDN BENCH TEST 1";
+static unsigned data_deliveries;
+
+static void received_data(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600)
+{
+	data_deliveries++;
+	CHECK(length == sizeof data_text - 1 && memcmp(packet->bytes, data_text, length) == 0,
+	      "data engine bytes at rate %u", rate9600 ? 9600 : 4800);
+}
+
+static void testDataCall(bool rate9600)
+{
+	nxdn_engine_cfg_t cfg = base_cfg(rate9600);
+
+	cfg.rx_gid = 77;
+	cfg.tx_dst = 88;
+	begin(0, &cfg, &hooks);
+	begin(1, &cfg, &hooks);
+	r[1].e.data_received = received_data;
+	data_deliveries = 0;
+	CHECK(nxdn_engine_data_stage_to(&r[0].e, data_text, sizeof data_text - 1, NXDN_ID_ALL, true), "stage text");
+	CHECK(nxdn_engine_tx_prepare(&r[0].e), "prime text");
+	CHECK(nxdn_engine_tx_go(&r[0].e), "start text");
+	steps(60);
+	CHECK(nxdn_engine_tx_state(&r[0].e) == AIR_TX_DONE, "text TX done");
+	CHECK(r[0].e.session.stats.tx_syms ==
+	      NXDN_PREAMBLE_SYMS + (NXDN_DATA_HEAD_DELAY_FRAMES + r[0].e.data_tx.packet.blocks + 2u) * NXDN_FRAME_SYMS,
+	      "text burst includes all delay frames");
+	CHECK(data_deliveries == 1 && r[1].starts == 0, "one data delivery and no voice");
+	nxdn_engine_end(&r[1].e);
+	nxdn_engine_end(&r[0].e);
+}
+#endif
+
 int main(void)
 {
 	testCall(false);
 	testCall(true);
 	testSquelch();
 	testSoftModem();
+#if CONFIG_NXDN_DATA
+	testDataCall(false);
+	testDataCall(true);
+#endif
 	printf("nxdnEngineTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }

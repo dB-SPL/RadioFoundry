@@ -6328,6 +6328,28 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 	changed(sm);
 }
 
+#if CONFIG_NXDN_DATA
+void radio_sm_nxdn_text(radio_sm_t *sm, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group, uint32_t now_ms)
+{
+	if (sm->air_tx) {
+		if (radio_nxdn_data_tx != RADIO_NXDN_TEXT_SENDING)
+			radio_nxdn_data_tx = RADIO_NXDN_TEXT_FAILED;
+		return;
+	}
+	if (sm->view.ch.mode != RADIO_MODE_NXDN ||
+	    sm->view.state == RS_TX || sm->ptt || sm->hotspot ||
+#if CONFIG_AIR_RAW
+	    sm->air_bench ||
+#endif
+	    tx_check(sm) != TXDENY_NONE || !radio_nxdn_data_stage(bytes, length, dst, group)) {
+		radio_nxdn_data_tx = RADIO_NXDN_TEXT_FAILED;
+		return;
+	}
+	end_reception(sm, now_ms);
+	air_key(sm, now_ms, sm->view.ch.tx_hz);
+}
+#endif
+
 // The settings sent while it transmitted (RREQ_P25_SET, RREQ_NXDN_SET): the engine takes them now
 static void air_apply(radio_sm_t *sm)
 {

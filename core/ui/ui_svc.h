@@ -198,10 +198,15 @@ typedef struct {
 	bool group;		// sent to a talkgroup
 	bool unread;
 	bool sent;		// one we sent
+	bool nxdn;
 	uint32_t age_ms;	// how long ago
 	char name[17];		// sender's name if known
 	char text[UI_MSG_TEXT_MAX + 1];
 } ui_msg_t;
+#define UI_MSG_NXDN_MAX 100
+uint16_t ui_svc_msg_handle(uint16_t row);
+bool ui_svc_nxdn_target(uint16_t *dst, bool *group);
+bool ui_svc_nxdn_send(uint32_t dst, bool group, const char *text);
 uint16_t ui_svc_msg_count(void);		// inbox, newest first
 uint16_t ui_svc_msg_unread(void);
 bool ui_svc_msg_get(uint16_t i, ui_msg_t *out);

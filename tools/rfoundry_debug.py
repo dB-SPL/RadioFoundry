@@ -1976,6 +1976,17 @@ def cmd_radio(link, a):
                 raise SystemExit("p25 [nac=N] [rx_nac=N] [tx_nac=N] [rx_tgid=N] [talkaround=auto|on|off] "
                                  "[tg=N|unit=N] [unit_id=N]")
         link.p25_settings_update(**kw)
+    elif op == "nxdn-text":
+        if len(a.args) != 1:
+            raise SystemExit('usage: radio nxdn-text "MESSAGE"')
+        try:
+            payload = a.args[0].encode("ascii")
+        except UnicodeEncodeError:
+            raise SystemExit("NXDN text must be printable ASCII") from None
+        if not 1 <= len(payload) <= 100 or any(not 32 <= byte <= 126 for byte in payload):
+            raise SystemExit("NXDN text must be 1 to 100 printable ASCII bytes")
+        link.radio(44, payload)
+        print("queued")
     elif op == "nxdn":                # nxdn [rate=9600|4800] [ran=N] [rx_ran=N] [tx_ran=N] [rx_gid=N] [tg=N|unit=N] [unit_id=N] [emergency=0|1]
         kw = {}
         usage = ("nxdn [rate=9600|4800] [ran=N] [rx_ran=N] [tx_ran=N] [rx_gid=N] [tg=N|unit=N] [unit_id=N] "
@@ -2894,7 +2905,7 @@ def main(argv=None):
                                   "monitor", "clear", "reply-cancel", "hotspot-exit", "target", "contact", "call-back",
                                   "target-clear", "privacy", "scan", "scan-vfo", "beep", "burst", "set", "usb",
                                   "usb-settings", "ppp", "vibrate", "mode", "cc", "ts", "sfr", "copy-vfo", "voice-test", "dtmf",
-                                  "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn"])
+                                  "tx-limit", "tx-drive", "pa-keyup", "pa-sweep", "pa-keyrun", "p25", "nxdn", "nxdn-text"])
     p.add_argument("args", nargs="*")
     p = sub.add_parser("data", help="DMR data: sms, call alert, radio check, settings, inbox")
     p.add_argument("op", choices=["sms", "alert", "check", "settings", "inbox", "read", "emergency", "em-settings",
