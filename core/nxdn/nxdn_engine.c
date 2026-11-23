@@ -125,6 +125,11 @@ static void data_drop(nxdn_engine_t *e, uint8_t reason)
 		e->hooks.data_dropped(reason, e->ctx);
 }
 
+static uint16_t data_key(uint8_t cipher, uint8_t id, void *ctx)
+{
+	return key_for(ctx, cipher, id);
+}
+
 static void engine_frame(const nxdn_rx_frame_t *f, void *ctx)
 {
 	nxdn_engine_t *e = ctx;
@@ -132,24 +137,25 @@ static void engine_frame(const nxdn_rx_frame_t *f, void *ctx)
 	uint16_t length;
 
 	if (f->lich < 0 || NXDN_LICH_USC(f->lich) != NXDN_USC_UDCH) {
-		e->data_rx.blocks = 0;
+		nxdn_data_reset(&e->data_rx);
 		e->voice_frame(f, &e->rx);
 		return;
 	}
 	if (nxdn_data_get(f->hard, f->soft, &e->rx.rx.work, channel) < 0) {
-		e->data_rx.blocks = 0;
+		nxdn_data_reset(&e->data_rx);
 		data_drop(e, NXDN_DROP_CHANNEL_CRC);
 		return;
 	}
 	if (e->cfg.rx_ran != NXDN_RAN_ANY && NXDN_SR_RAN(channel[0]) != e->cfg.rx_ran) {
-		e->data_rx.blocks = 0;
+		nxdn_data_reset(&e->data_rx);
 		data_drop(e, NXDN_DROP_RAN);
 		return;
 	}
-	nxdn_data_result_t result = nxdn_data_receive(&e->data_rx, e->cfg.rate9600, (uint8_t)f->lich, channel, &length);
+	nxdn_data_result_t result = nxdn_data_receive(&e->data_rx, e->cfg.rate9600, (uint8_t)f->lich, channel, &length, data_key, e);
 	switch (result) {
 	case NXDN_DATA_BAD_HEADER: data_drop(e, NXDN_DROP_HEADER); return;
 	case NXDN_DATA_BAD_SEQUENCE: data_drop(e, NXDN_DROP_SEQUENCE); return;
+	case NXDN_DATA_BAD_CIPHER: data_drop(e, NXDN_DROP_CIPHER); return;
 	case NXDN_DATA_BAD_CRC: data_drop(e, NXDN_DROP_MESSAGE_CRC); return;
 	case NXDN_DATA_COMPLETE: break;
 	default: return;
@@ -170,7 +176,7 @@ static void engine_lost(void *ctx)
 
 	if (e->data_rx.blocks)
 		data_drop(e, NXDN_DROP_SYNC);
-	e->data_rx.blocks = 0;
+	nxdn_data_reset(&e->data_rx);
 	e->voice_lost(&e->rx);
 }
 
@@ -221,15 +227,24 @@ nxdn_data_tx_result_t nxdn_engine_data_result(const nxdn_engine_t *e)
 bool nxdn_engine_data_stage(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group,
 			    uint16_t head_delay_frames)
 {
-	nxdn_vcall_t address = { .call_type = e->cfg.tx_call_type, .src = e->cfg.unit_id, .dst = e->cfg.tx_dst };
+	nxdn_vcall_t address = {
+		.call_type = e->cfg.tx_call_type, .src = e->cfg.unit_id, .dst = e->cfg.tx_dst,
+		.cipher = e->cfg.tx_cipher,
+		.key_id = e->cfg.tx_cipher == NXDN_CIPHER_NONE ? 0 : e->cfg.tx_key_id,
+	};
 
 	if (dst) {
 		address.dst = dst;
 		address.call_type = group ? NXDN_CALL_GROUP : NXDN_CALL_INDIVIDUAL;
 	}
-	if (head_delay_frames > NXDN_DATA_MAX_HEAD_DELAY || e->data_sending || e->cfg.tx_inhibit || e->cfg.tx_cipher != NXDN_CIPHER_NONE ||
-	    !air_session_is_open(&e->session) || air_session_tx_state(&e->session) != AIR_TX_IDLE || !(e->session.fit & AIR_FIT_TX) ||
-	    !nxdn_data_prepare(&e->data_tx.packet, e->data_tx.bytes, sizeof e->data_tx.bytes, &address, e->cfg.tx_ran, bytes, length))
+	if (head_delay_frames > NXDN_DATA_MAX_HEAD_DELAY || e->data_sending || e->cfg.tx_inhibit ||
+	    !air_session_is_open(&e->session) || air_session_tx_state(&e->session) != AIR_TX_IDLE ||
+	    !(e->session.fit & AIR_FIT_TX))
+		return false;
+	uint16_t key = key_for(e, address.cipher, address.key_id);
+
+	if (!nxdn_data_prepare(&e->data_tx.packet, e->data_tx.bytes, sizeof e->data_tx.bytes,
+			       &address, e->cfg.tx_ran, bytes, length, key))
 		return false;
 	e->data_index = e->data_offset = 0;
 	e->head_delay_frames = head_delay_frames;
@@ -303,7 +318,7 @@ static void tx_done(void *ctx)
 	nxdn_engine_t *e = ctx;
 
 	// A partial receive cannot continue across a local transmission.
-	e->data_rx.blocks = 0;
+	nxdn_data_reset(&e->data_rx);
 	if (e->data_sending) {
 		bool complete = e->session.finished && nxdn_engine_data_queued(e) &&
 			e->session.stats.tx_chunks_started != e->data_starts &&
@@ -348,7 +363,7 @@ void nxdn_engine_retuned(nxdn_engine_t *e)
 {
 	air_session_retuned(&e->session);
 #if CONFIG_NXDN_DATA
-	e->data_rx.blocks = 0;
+	nxdn_data_reset(&e->data_rx);
 #endif
 }
 
@@ -373,7 +388,7 @@ bool nxdn_engine_tx_prepare(nxdn_engine_t *e)
 		return false;
 #if CONFIG_NXDN_DATA
 	if (e->data_sending)
-		return cfg->tx_cipher == NXDN_CIPHER_NONE && air_session_tx_prime(&e->session);
+		return air_session_tx_prime(&e->session);
 #endif
 	uint16_t key = key_for(e, cipher, id);
 	if (cipher != NXDN_CIPHER_NONE && !key)

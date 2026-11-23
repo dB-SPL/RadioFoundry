@@ -285,6 +285,7 @@ static nxdn_engine_cfg_t base_cfg(bool rate9600)
 	return cfg;
 }
 
+#if CONFIG_NXDN_SCRAMBLER
 static void testSystemKeys(bool rate9600)
 {
 	static const uint8_t valid_silence[9] = { 0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b };
@@ -325,6 +326,8 @@ static void testSystemKeys(bool rate9600)
 	CHECK(!nxdn_engine_tx_prepare(&r[0].e), "unsupported cipher refuses transmit");
 	nxdn_engine_end(&r[0].e);
 }
+
+#endif
 
 static void testCall(bool rate9600)
 {
@@ -766,6 +769,12 @@ static void testDataCall(bool rate9600, uint16_t delay)
 	begin(1, &cfg, &hooks);
 	r[1].e.hooks.data_received = received_data;
 	data_deliveries = 0;
+#if !CONFIG_NXDN_SCRAMBLER
+	r[0].e.cfg.tx_cipher = NXDN_CIPHER_SCRAMBLE;
+	CHECK(!nxdn_engine_data_stage_to(&r[0].e, data_bytes, sizeof data_bytes, 77, true),
+	      "disabled scrambler cannot stage keyed data");
+	r[0].e.cfg.tx_cipher = NXDN_CIPHER_NONE;
+#endif
 	CHECK(!nxdn_engine_data_stage(&r[0].e, data_bytes, sizeof data_bytes, NXDN_ID_ALL, true,
 				      NXDN_DATA_MAX_HEAD_DELAY + 1), "reject a countdown that cannot be encoded");
 	CHECK(nxdn_engine_data_stage(&r[0].e, data_bytes, sizeof data_bytes, NXDN_ID_ALL, true, delay), "stage data");
@@ -794,12 +803,86 @@ static void testDataCall(bool rate9600, uint16_t delay)
 	nxdn_engine_end(&r[1].e);
 	nxdn_engine_end(&r[0].e);
 }
+
+#if CONFIG_NXDN_SCRAMBLER
+static uint8_t fragment[38];
+static uint8_t drop_reason;
+
+static void scrambled_rx(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600, void *ctx)
+{
+	(void)rate9600;
+	(void)ctx;
+	data_deliveries++;
+	CHECK(length == sizeof fragment && memcmp(packet->bytes, fragment, length) == 0 &&
+	      packet->address.cipher == NXDN_CIPHER_SCRAMBLE && packet->address.key_id == 63 &&
+	      !packet->scramble_key, "verified plaintext and cipher metadata without the key");
+}
+
+static void scrambled_drop(uint8_t reason, void *ctx)
+{
+	(void)ctx;
+	drop_reason = reason;
+}
+
+static void testScrambledData(bool rate9600)
+{
+	// Independent packed-fragment vector for bytes 0..37, CRC C1DAC747, 18 zero pads and key 1.
+	static const uint8_t wire[] = {
+		0x80, 0x00, 0x02, 0x05, 0x04, 0x11, 0x06, 0x7F, 0x09, 0x19, 0x0C, 0x6B,
+		0x19, 0x4D, 0x71, 0x8E, 0x11, 0x17, 0x14, 0x07, 0x00, 0x6D, 0x6F, 0x06,
+		0x0E, 0x7F, 0x6F, 0x4E, 0x23, 0xE3, 0x9E, 0x18, 0x20, 0x33, 0x22, 0x4F,
+		0x25, 0x4D, 0xC6, 0xAA, 0xD4, 0x67, 0x6A, 0xC1, 0x7E, 0x87, 0x07, 0x12,
+		0x12, 0x6C, 0x6D, 0x69, 0x6F, 0x77, 0x63, 0x33, 0x4A, 0xAB, 0xBF, 0xF9,
+	};
+	nxdn_engine_cfg_t cfg = base_cfg(rate9600);
+
+	for (uint8_t i = 0; i < sizeof fragment; i++)
+		fragment[i] = i;
+	cfg.system = 2;
+	cfg.tx_cipher = NXDN_CIPHER_SCRAMBLE;
+	cfg.tx_key_id = 63;
+	begin(0, &cfg, &hooks);
+	cfg.tx_cipher = NXDN_CIPHER_NONE;
+	begin(1, &cfg, &hooks);
+	r[1].e.hooks.data_received = scrambled_rx;
+	r[1].e.hooks.data_dropped = scrambled_drop;
+	seeds[0] = 0;
+	CHECK(!nxdn_engine_data_stage_to(&r[0].e, fragment, sizeof fragment, NXDN_ID_ALL, true),
+	      "missing TX key cannot stage");
+	r[0].e.cfg.tx_cipher = NXDN_CIPHER_AES;
+	CHECK(!nxdn_engine_data_stage_to(&r[0].e, fragment, sizeof fragment, NXDN_ID_ALL, true),
+	      "unsupported TX cipher cannot stage");
+	r[0].e.cfg.tx_cipher = NXDN_CIPHER_SCRAMBLE;
+	seeds[0] = 1;
+	static const uint8_t expected_drop[] = { NXDN_DROP_CIPHER, 0, NXDN_DROP_MESSAGE_CRC };
+
+	for (uint16_t key = 0; key < sizeof expected_drop; key++) {
+		seeds[1] = key;
+		drop_reason = 0;
+		data_deliveries = 0;
+		CHECK(nxdn_engine_data_stage_to(&r[0].e, fragment, sizeof fragment, NXDN_ID_ALL, true),
+		      "stage scrambled data");
+		CHECK(r[0].e.data_tx.packet.blocks == 3 && memcmp(r[0].e.data_tx.bytes, wire, sizeof wire) == 0,
+		      "three-block wire bytes, including split CRC and scrambled padding");
+		CHECK(nxdn_engine_tx_prepare(&r[0].e) && nxdn_engine_tx_go(&r[0].e), "start scrambled data");
+		steps(60);
+		CHECK(data_deliveries == (key == 1) && drop_reason == expected_drop[key] && !r[1].starts,
+		      "receive result for key case %u", key);
+		CHECK(nxdn_engine_data_result(&r[0].e) == NXDN_DATA_TX_COMPLETED, "local burst completed");
+		nxdn_engine_tx_clear(&r[0].e);
+	}
+	nxdn_engine_end(&r[1].e);
+	nxdn_engine_end(&r[0].e);
+}
+#endif
 #endif
 
 int main(void)
 {
+#if CONFIG_NXDN_SCRAMBLER
 	testSystemKeys(false);
 	testSystemKeys(true);
+#endif
 	testCall(false);
 	testCall(true);
 	testSquelch();
@@ -807,6 +890,10 @@ int main(void)
 #if CONFIG_NXDN_DATA
 	testDataCall(false, 0);
 	testDataCall(true, 10);
+#if CONFIG_NXDN_SCRAMBLER
+	testScrambledData(false);
+	testScrambledData(true);
+#endif
 #endif
 	printf("nxdnEngineTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;

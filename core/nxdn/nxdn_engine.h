@@ -115,6 +115,7 @@ enum {
 	NXDN_DROP_RAN,
 	NXDN_DROP_DESTINATION,
 	NXDN_DROP_SYNC,
+	NXDN_DROP_CIPHER,
 };
 static inline bool nxdn_engine_data_queued(const nxdn_engine_t *e)
 {

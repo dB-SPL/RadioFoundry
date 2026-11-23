@@ -9,30 +9,22 @@ int main(void)
 {
 	uint8_t bits[49] = { 0 }, before[49];
 	// NXDN TS 1-D v1.3, 7.2.2.1: all 20 bytes of the key-1 UDCH example.
-	// Consecutive EHR positions take consecutive 49-bit slices of the same keystream.
-	static const uint8_t plain_data[] = "ABCDEFGHIJKLMNOPQRST";
+	uint8_t data[] = "ABCDEFGHIJKLMNOPQRST";
 	static const uint8_t scrambled_data[] = {
 		0xc1, 0x43, 0x43, 0x42, 0x45, 0x52, 0x47, 0x30, 0x48, 0x5a,
 		0x4d, 0x2c, 0x58, 0x0e, 0x30, 0xd1, 0x50, 0x54, 0x55, 0x40,
 	};
-	for (unsigned pos = 0; pos * sizeof bits < 8 * sizeof scrambled_data; pos++) {
-		memset(bits, 0, sizeof bits);
-		if (!nxdn_scramble_ehr(1, (uint8_t)(pos / 4), (uint8_t)(pos % 4), bits))
-			return 1;
-		for (unsigned i = 0; i < sizeof bits; i++) {
-			unsigned bit = pos * sizeof bits + i;
-			if (bit >= 8 * sizeof scrambled_data)
-				break;
-			unsigned expected = (plain_data[bit / 8] ^ scrambled_data[bit / 8]) >> (7 - bit % 8);
-			if (bits[i] != (expected & 1u))
-				return puts("FAIL standard UDCH vector"), 1;
-		}
-		if (!nxdn_scramble_ehr(1, (uint8_t)(pos / 4), (uint8_t)(pos % 4), bits))
-			return 1;
-		for (unsigned i = 0; i < sizeof bits; i++)
-			if (bits[i])
-				return puts("FAIL reversible"), 1;
-	}
+	if (nxdn_scramble_data(0, data, sizeof scrambled_data) ||
+	    nxdn_scramble_data(0x8000, data, sizeof scrambled_data) ||
+	    nxdn_scramble_data(1, NULL, sizeof scrambled_data) ||
+	    memcmp(data, "ABCDEFGHIJKLMNOPQRST", sizeof scrambled_data))
+		return puts("FAIL invalid UDCH key or buffer"), 1;
+	if (!nxdn_scramble_data(1, data, sizeof scrambled_data) ||
+	    memcmp(data, scrambled_data, sizeof scrambled_data) || data[sizeof scrambled_data] != 0)
+		return puts("FAIL standard UDCH vector"), 1;
+	if (!nxdn_scramble_data(1, data, sizeof scrambled_data) ||
+	    memcmp(data, "ABCDEFGHIJKLMNOPQRST", sizeof scrambled_data))
+		return puts("FAIL reversible UDCH"), 1;
 	memset(bits, 0, sizeof bits);
 	if (!nxdn_scramble_ehr(32767, 3, 3, bits))
 		return puts("FAIL maximum key"), 1;

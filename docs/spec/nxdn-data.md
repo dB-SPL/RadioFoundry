@@ -20,7 +20,9 @@ conventional.
 
 NXDN TS 1-A v1.3 §§4.5.2.3, 4.5.5, 4.6, 5.2, 6.3, 6.4.1.3–6, 6.4.1.8, 6.5.19–21 and 9.3 define the
 frame, messages and CRC. TS 1-B v1.3 §§4.2, 5 and 8.1.4 define the conventional sequence.
-Support clear, unconfirmed, single-fragment Data Calls at either configured NXDN rate.
+Support unconfirmed, single-fragment Data Calls at either configured NXDN rate.
+Clear calls are always supported. Keyed data uses the 15-bit NXDN Scrambler when
+`CONFIG_NXDN_SCRAMBLER` is enabled.
 Use RDCH with USC `01`. Option `11` selects UDCH and `00` selects FACCH2. Receive both
 directions. Transmit as a subscriber with inbound LICH.
 
@@ -38,6 +40,22 @@ The frame and block numbers both descend to zero. Remove the declared padding, t
 the big-endian CRC-32 over the user bytes. The checksum can cross a block boundary.
 Deliver the verified bytes once. A new header, broken sequence, early matching release,
 loss of sync, retune or mode exit discards an incomplete fragment.
+
+## Keyed data
+
+Transmit uses the active channel's configured cipher and key ID. Receive uses the cipher and
+key ID in the CRC-verified `DCALL` header. Both directions use the existing conventional
+system key lookup. An unsupported cipher or missing key prevents transmission or delivery.
+
+For keyed TX, append the message CRC-32 and pad the fragment to whole 20-byte blocks.
+Seed the shared 15-bit generator once for that fragment and XOR the resulting bits into
+the packed byte stream, MSB first, including the CRC and padding. Then encode the UDCH
+blocks and their channel CRC-15. For RX, validate the channel CRC-15 and collect the blocks
+before applying the same transform. Remove the padding and verify the message CRC-32
+before delivering plaintext. These rules use the generator in TS 1-D v1.3 Figure 5.3-1
+and the UDCH vector in §7.2.2.1. Three first-party conventional repeater bursts confirmed
+continuity across blocks and the scrambling of CRC and padding. The header, block
+numbering, header delay and release remain readable through the common channel codec.
 
 ## Radio interfaces
 
@@ -62,7 +80,7 @@ loss of sync, retune or mode exit discards an incomplete fragment.
   direction and block count. Its one-slot mailbox keeps the older pending packet if full.
   Application recognition runs after this handoff.
 
-The data bearer does not use the voice codec. Keyed data, confirmed calls, selective retry,
+The data bearer does not use the voice codec. DES, AES, confirmed calls, selective retry,
 multiple fragments, trunked Short Data Call, and application handlers are outside this profile.
 
 ## Verification
@@ -71,4 +89,7 @@ multiple fragments, trunked Short Data Call, and application handlers are outsid
 and mutated receive frames. `nxdnEngineTest` covers the zero- and ten-frame burst sequences,
 provider completion, abort and underrun. `radioCoreTestNxdn` and `radioCoreTestP25Nxdn` exercise
 normal admission, busy rejection, terminal result consumption, TX time-out and the receive mailbox
-on simulated hardware. On-air validation is pending.
+on simulated hardware. `nxdnScrambleTest` checks the packed-byte transform against the
+published UDCH vector. `nxdnEngineTest` checks an independently generated three-block
+vector with a split CRC and scrambled padding, plus success, wrong-key and missing-key
+cases at both rates. On-air validation of this implementation is pending.

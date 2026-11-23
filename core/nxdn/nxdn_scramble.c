@@ -9,6 +9,24 @@ static uint16_t step(uint16_t state)
 	return (uint16_t)((state >> 1) | (((state ^ (state >> 1)) & 1u) << 14));
 }
 
+bool nxdn_scramble_data(uint16_t key, uint8_t *bytes, size_t length)
+{
+	if (!bytes || !key || key > 0x7fff)
+		return false;
+	uint16_t state = key;
+
+	for (size_t i = 0; i < length; i++) {
+		uint8_t mask = 0;
+
+		for (uint8_t bit = 0; bit < 8; bit++) {
+			mask = (uint8_t)(mask << 1 | (state & 1u));
+			state = step(state);
+		}
+		bytes[i] ^= mask;
+	}
+	return true;
+}
+
 bool nxdn_scramble_vch(uint16_t key, uint8_t frame, uint8_t vch, uint8_t ehr[9])
 {
 	uint8_t bits[AMBE_PARAM_BITS];

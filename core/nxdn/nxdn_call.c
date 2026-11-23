@@ -36,10 +36,19 @@ static bool data_address_valid(const nxdn_vcall_t *address)
 		(address->call_type == NXDN_CALL_GROUP || address->call_type == NXDN_CALL_INDIVIDUAL);
 }
 
-bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capacity, const nxdn_vcall_t *address, uint8_t ran,
-		       const uint8_t *bytes, uint16_t length)
+static bool data_cipher_valid(const nxdn_vcall_t *address, uint16_t key)
 {
-	if ((length && !bytes) || length > NXDN_DATA_MAX_BYTES || ran > 63 || !data_address_valid(address))
+	if (address->cipher == NXDN_CIPHER_NONE)
+		return address->key_id == 0 && key == 0;
+	return CONFIG_NXDN_SCRAMBLER && address->cipher == NXDN_CIPHER_SCRAMBLE &&
+		address->key_id < NXDN_KEY_IDS && key && key <= NXDN_SCRAMBLE_KEY_MAX;
+}
+
+bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capacity, const nxdn_vcall_t *address, uint8_t ran,
+		       const uint8_t *bytes, uint16_t length, uint16_t scramble_key)
+{
+	if ((length && !bytes) || length > NXDN_DATA_MAX_BYTES || ran > 63 || !data_address_valid(address) ||
+	    !data_cipher_valid(address, scramble_key))
 		return false;
 	uint8_t blocks = (uint8_t)((length + 4 + NXDN_DATA_BLOCK_BYTES - 1) / NXDN_DATA_BLOCK_BYTES);
 
@@ -56,6 +65,10 @@ bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capaci
 	for (uint8_t i = 0; i < 4; i++)
 		storage[length + i] = (uint8_t)(crc >> (24 - 8 * i));
 	memset(storage + length + 4, 0, packet->pad);
+#if CONFIG_NXDN_SCRAMBLER
+	if (scramble_key)
+		return nxdn_scramble_data(scramble_key, storage, blocks * NXDN_DATA_BLOCK_BYTES);
+#endif
 	return true;
 }
 
@@ -89,6 +102,7 @@ void nxdn_data_frame(const nxdn_data_tx_t *packet, const uint8_t *storage, bool 
 		if (!release) {
 			msg[0] = NXDN_MSG_DCALL_HEADER;
 			msg[2] |= rate9600 ? 2 : 0;
+			msg[7] = (uint8_t)(address.cipher << 6 | address.key_id);
 			msg[8] = packet->blocks - 1;
 			msg[9] = (uint8_t)(packet->pad << 3 | 4);
 		}
@@ -105,7 +119,8 @@ void nxdn_data_frame(const nxdn_data_tx_t *packet, const uint8_t *storage, bool 
 }
 
 nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, uint8_t lich,
-				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length)
+				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length,
+				    nxdn_data_key_fn key_for, void *ctx)
 {
 	const uint8_t *msg = in + 1;
 	uint8_t type = nxdn_msg_type(msg);
@@ -120,7 +135,7 @@ nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, 
 		    type == NXDN_MSG_TX_REL && nxdn_vcall_parse(msg, &release) &&
 		    release.src == packet->address.src && release.dst == packet->address.dst &&
 		    release.call_type == packet->address.call_type) {
-			packet->blocks = 0;
+			nxdn_data_reset(packet);
 			return NXDN_DATA_BAD_SEQUENCE;
 		}
 		return NXDN_DATA_IGNORED;
@@ -135,14 +150,20 @@ nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, 
 			.src = (uint16_t)(msg[3] << 8 | msg[4]),
 			.dst = (uint16_t)(msg[5] << 8 | msg[6]),
 			.cipher = msg[7] >> 6,
+			.key_id = msg[7] & 0x3F,
 		};
 
-		packet->blocks = 0;
+		nxdn_data_reset(packet);
 		if (in[0] > 63 || msg[1] || (msg[2] & 31) != (rate9600 ? 2 : 0) ||
-		    msg[7] || (msg[8] & 0xF0) || (msg[9] & 7) != 4 || msg[10] ||
+		    (msg[8] & 0xF0) || (msg[9] & 7) != 4 || msg[10] ||
 		    pad > NXDN_DATA_BLOCK_BYTES || blocks * NXDN_DATA_BLOCK_BYTES < pad + 4 ||
 		    !data_address_valid(&address))
 			return NXDN_DATA_BAD_HEADER;
+		uint16_t key = key_for && address.cipher == NXDN_CIPHER_SCRAMBLE ?
+			key_for(address.cipher, address.key_id, ctx) : 0;
+		if (!data_cipher_valid(&address, key))
+			return NXDN_DATA_BAD_CIPHER;
+		packet->scramble_key = key;
 		packet->address = address;
 		packet->blocks = blocks;
 		packet->received = 0;
@@ -157,14 +178,21 @@ nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, 
 
 	if (type != NXDN_MSG_DCALL_BLOCK || in[0] != packet->ran || direction != packet->direction ||
 	    msg[1] != (number << 4 | number)) {
-		packet->blocks = 0;
+		nxdn_data_reset(packet);
 		return NXDN_DATA_BAD_SEQUENCE;
 	}
 	memcpy(packet->bytes + packet->received * NXDN_DATA_BLOCK_BYTES, msg + 2, NXDN_DATA_BLOCK_BYTES);
 	if (++packet->received != packet->blocks)
 		return NXDN_DATA_PENDING;
-	*length = (uint16_t)(packet->blocks * NXDN_DATA_BLOCK_BYTES - packet->pad - 4);
-	packet->blocks = 0;
+	uint16_t packed = packet->blocks * NXDN_DATA_BLOCK_BYTES;
+#if CONFIG_NXDN_SCRAMBLER
+	if (packet->scramble_key && !nxdn_scramble_data(packet->scramble_key, packet->bytes, packed)) {
+		nxdn_data_reset(packet);
+		return NXDN_DATA_BAD_CIPHER;
+	}
+#endif
+	*length = (uint16_t)(packed - packet->pad - 4);
+	nxdn_data_reset(packet);
 	uint32_t crc = 0;
 
 	for (uint8_t i = 0; i < 4; i++)

@@ -127,6 +127,7 @@ static inline uint8_t nxdn_msg_type(const uint8_t *msg) { return msg[0] & 0x3F; 
 typedef struct {
 	uint8_t bytes[NXDN_DATA_MAX_BYTES + 4];
 	uint8_t blocks, pad, received, ran, direction;
+	uint16_t scramble_key;	// RX assembly only, cleared before a result is delivered
 	nxdn_vcall_t address;
 } nxdn_data_packet_t;
 
@@ -137,6 +138,7 @@ typedef enum {
 	NXDN_DATA_BAD_HEADER,
 	NXDN_DATA_BAD_SEQUENCE,
 	NXDN_DATA_BAD_CRC,
+	NXDN_DATA_BAD_CIPHER,
 } nxdn_data_result_t;
 
 typedef struct {
@@ -144,15 +146,24 @@ typedef struct {
 	uint8_t ran, blocks, pad;
 } nxdn_data_tx_t;
 
+typedef uint16_t (*nxdn_data_key_fn)(uint8_t cipher, uint8_t key_id, void *ctx);
+
 bool nxdn_data_prepare(nxdn_data_tx_t *packet, uint8_t *storage, uint16_t capacity, const nxdn_vcall_t *address, uint8_t ran,
-		       const uint8_t *bytes, uint16_t length);
+		       const uint8_t *bytes, uint16_t length, uint16_t scramble_key);
 // FACCH2 lead-in, with delay count in frame periods.
 void nxdn_data_head_delay(const nxdn_data_tx_t *packet, uint8_t remaining, uint8_t *frame);
 // Frame index zero is the header. Index blocks + 1 is the release.
 void nxdn_data_frame(const nxdn_data_tx_t *packet, const uint8_t *storage, bool rate9600, uint8_t index, uint8_t *frame);
-// Call only for channel-CRC-verified frames. Clear blocks on loss or session reset.
+// Call only for channel-CRC-verified frames. Reset on loss or session reset.
 nxdn_data_result_t nxdn_data_receive(nxdn_data_packet_t *packet, bool rate9600, uint8_t lich,
-				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length);
+				    const uint8_t in[NXDN_DATA_BYTES], uint16_t *length,
+				    nxdn_data_key_fn key_for, void *ctx);
+
+static inline void nxdn_data_reset(nxdn_data_packet_t *packet)
+{
+	packet->blocks = 0;
+	packet->scramble_key = 0;
+}
 void nxdn_data_put(uint8_t *frame, const uint8_t in[NXDN_DATA_BYTES]);
 #else
 #define NXDN_FEC_STEPS		96
