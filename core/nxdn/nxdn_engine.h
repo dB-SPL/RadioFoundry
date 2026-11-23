@@ -26,6 +26,11 @@ typedef struct {
 	// Resolve a key when a call needs it. Zero means unavailable.
 	uint16_t (*traffic_key)(uint8_t system, uint8_t cipher, uint8_t id, void *ctx);
 #endif
+#if CONFIG_NXDN_DATA
+	// The packet is borrowed for this callback and contains length verified user bytes.
+	void (*data_received)(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600, void *ctx);
+	void (*data_dropped)(uint8_t reason, void *ctx);
+#endif
 } nxdn_engine_hooks_t;
 
 typedef struct {
@@ -57,11 +62,28 @@ typedef struct {
 	uint32_t tx_filler;	// silence frames sent because the encoder had none ready
 } nxdn_engine_view_t;
 
+#if CONFIG_NXDN_DATA
+typedef enum {
+	NXDN_DATA_TX_PENDING,
+	NXDN_DATA_TX_COMPLETED,
+	NXDN_DATA_TX_FAILED,
+} nxdn_data_tx_result_t;
+#endif
+
 typedef struct {
 	air_session_t session;
 	const air_mode_t *mode;
 	nxdn_call_rx_t rx;
-	nxdn_call_tx_t tx;
+	union {
+		nxdn_call_tx_t tx;
+#if CONFIG_NXDN_DATA
+		struct {
+			nxdn_data_tx_t packet;
+			uint8_t bytes[NXDN_DATA_TX_BYTES];
+			uint8_t frame[NXDN_FRAME_BYTES];
+		} data_tx;
+#endif
+	};
 	nxdn_engine_cfg_t cfg;
 	nxdn_engine_hooks_t hooks;
 	void *ctx;
@@ -73,7 +95,42 @@ typedef struct {
 	nxdn_engine_view_t view;
 	uint8_t frame[NXDN_FRAME_BYTES];	// the framer's frame buffer ...
 	int8_t soft[NXDN_FRAME_SYMS];		// ... and its soft values, for the Viterbi decoder
+#if CONFIG_NXDN_DATA
+	nxdn_data_packet_t data_rx;
+	void (*voice_frame)(const nxdn_rx_frame_t *, void *);
+	void (*voice_lost)(void *);
+	uint16_t data_index, head_delay_frames;
+	uint8_t data_offset;
+	uint8_t data_result;
+	uint32_t data_underruns, data_starts;
+	bool data_sending;
+#endif
 } nxdn_engine_t;
+#if CONFIG_NXDN_DATA
+enum {
+	NXDN_DROP_CHANNEL_CRC = 1,
+	NXDN_DROP_HEADER,
+	NXDN_DROP_SEQUENCE,
+	NXDN_DROP_MESSAGE_CRC,
+	NXDN_DROP_RAN,
+	NXDN_DROP_DESTINATION,
+	NXDN_DROP_SYNC,
+};
+static inline bool nxdn_engine_data_queued(const nxdn_engine_t *e)
+{
+	// Preamble, header, data blocks and release.
+	return e->data_index > e->head_delay_frames + e->data_tx.packet.blocks + 2;
+}
+bool nxdn_engine_data_stage(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group,
+			    uint16_t head_delay_frames);
+static inline bool nxdn_engine_data_stage_to(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length,
+					    uint16_t dst, bool group)
+{
+	return nxdn_engine_data_stage(e, bytes, length, dst, group, 0);
+}
+// Current staged request. Check before clearing the TX engine.
+nxdn_data_tx_result_t nxdn_engine_data_result(const nxdn_engine_t *e);
+#endif
 
 // The mode for a rate
 const air_mode_t *nxdn_engine_mode(bool rate9600);

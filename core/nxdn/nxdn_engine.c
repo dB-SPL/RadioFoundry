@@ -118,12 +118,141 @@ static void on_end(void *ctx)
 
 static const nxdn_call_sink_t sink = { on_start, on_update, on_voice, on_end };
 
+#if CONFIG_NXDN_DATA
+static void data_drop(nxdn_engine_t *e, uint8_t reason)
+{
+	if (e->hooks.data_dropped)
+		e->hooks.data_dropped(reason, e->ctx);
+}
+
+static void engine_frame(const nxdn_rx_frame_t *f, void *ctx)
+{
+	nxdn_engine_t *e = ctx;
+	uint8_t channel[NXDN_DATA_BYTES];
+	uint16_t length;
+
+	if (f->lich < 0 || NXDN_LICH_USC(f->lich) != NXDN_USC_UDCH) {
+		e->data_rx.blocks = 0;
+		e->voice_frame(f, &e->rx);
+		return;
+	}
+	if (nxdn_data_get(f->hard, f->soft, &e->rx.rx.work, channel) < 0) {
+		e->data_rx.blocks = 0;
+		data_drop(e, NXDN_DROP_CHANNEL_CRC);
+		return;
+	}
+	if (e->cfg.rx_ran != NXDN_RAN_ANY && NXDN_SR_RAN(channel[0]) != e->cfg.rx_ran) {
+		e->data_rx.blocks = 0;
+		data_drop(e, NXDN_DROP_RAN);
+		return;
+	}
+	nxdn_data_result_t result = nxdn_data_receive(&e->data_rx, e->cfg.rate9600, (uint8_t)f->lich, channel, &length);
+	switch (result) {
+	case NXDN_DATA_BAD_HEADER: data_drop(e, NXDN_DROP_HEADER); return;
+	case NXDN_DATA_BAD_SEQUENCE: data_drop(e, NXDN_DROP_SEQUENCE); return;
+	case NXDN_DATA_BAD_CRC: data_drop(e, NXDN_DROP_MESSAGE_CRC); return;
+	case NXDN_DATA_COMPLETE: break;
+	default: return;
+	}
+	const nxdn_vcall_t *address = &e->data_rx.address;
+	uint16_t target = address->call_type == NXDN_CALL_INDIVIDUAL ? e->cfg.unit_id : e->cfg.rx_gid;
+
+	if (address->dst != target &&
+	    !(address->call_type == NXDN_CALL_GROUP && address->dst == NXDN_ID_ALL))
+		data_drop(e, NXDN_DROP_DESTINATION);
+	else if (e->hooks.data_received)
+		e->hooks.data_received(&e->data_rx, length, e->cfg.rate9600, e->ctx);
+}
+
+static void engine_lost(void *ctx)
+{
+	nxdn_engine_t *e = ctx;
+
+	if (e->data_rx.blocks)
+		data_drop(e, NXDN_DROP_SYNC);
+	e->data_rx.blocks = 0;
+	e->voice_lost(&e->rx);
+}
+
+static void data_fill(nxdn_engine_t *e)
+{
+	while (!nxdn_engine_data_queued(e)) {
+		uint16_t space = air_session_tx_space(&e->session);
+		uint16_t total = e->data_index ? NXDN_FRAME_SYMS : NXDN_PREAMBLE_SYMS;
+		uint16_t count = total - e->data_offset;
+		const uint8_t *symbols = e->data_index ? e->data_tx.frame : nxdn_preamble;
+
+		if (!space)
+			return;
+		if (count > space)
+			count = space;
+		if (e->data_index && !e->data_offset) {
+			if (e->data_index <= e->head_delay_frames)
+				nxdn_data_head_delay(&e->data_tx.packet, (uint8_t)(e->head_delay_frames - e->data_index),
+						     e->data_tx.frame);
+			else
+				nxdn_data_frame(&e->data_tx.packet, e->data_tx.bytes, e->cfg.rate9600,
+						(uint8_t)(e->data_index - e->head_delay_frames - 1), e->data_tx.frame);
+		}
+		if (!air_session_tx(&e->session, symbols, e->data_offset, count))
+			return;
+		e->data_offset += count;
+		if (e->data_offset == total) {
+			e->data_offset = 0;
+			e->data_index++;
+		}
+	}
+	air_session_tx_finish(&e->session);
+}
+
+static void data_result(nxdn_engine_t *e, nxdn_data_tx_result_t result)
+{
+	uint8_t pending = NXDN_DATA_TX_PENDING;
+
+	__atomic_compare_exchange_n(&e->data_result, &pending, (uint8_t)result, false,
+				    __ATOMIC_RELEASE, __ATOMIC_RELAXED);
+}
+
+nxdn_data_tx_result_t nxdn_engine_data_result(const nxdn_engine_t *e)
+{
+	return __atomic_load_n(&e->data_result, __ATOMIC_ACQUIRE);
+}
+
+bool nxdn_engine_data_stage(nxdn_engine_t *e, const uint8_t *bytes, uint16_t length, uint16_t dst, bool group,
+			    uint16_t head_delay_frames)
+{
+	nxdn_vcall_t address = { .call_type = e->cfg.tx_call_type, .src = e->cfg.unit_id, .dst = e->cfg.tx_dst };
+
+	if (dst) {
+		address.dst = dst;
+		address.call_type = group ? NXDN_CALL_GROUP : NXDN_CALL_INDIVIDUAL;
+	}
+	if (head_delay_frames > NXDN_DATA_MAX_HEAD_DELAY || e->data_sending || e->cfg.tx_inhibit || e->cfg.tx_cipher != NXDN_CIPHER_NONE ||
+	    !air_session_is_open(&e->session) || air_session_tx_state(&e->session) != AIR_TX_IDLE || !(e->session.fit & AIR_FIT_TX) ||
+	    !nxdn_data_prepare(&e->data_tx.packet, e->data_tx.bytes, sizeof e->data_tx.bytes, &address, e->cfg.tx_ran, bytes, length))
+		return false;
+	e->data_index = e->data_offset = 0;
+	e->head_delay_frames = head_delay_frames;
+	e->data_underruns = e->session.stats.tx_underruns;
+	e->data_starts = e->session.stats.tx_chunks_started;
+	__atomic_store_n(&e->data_result, NXDN_DATA_TX_PENDING, __ATOMIC_RELAXED);
+	e->data_sending = true;
+	return true;
+}
+#endif
+
 // ── Transmit ──
 // Symbols to the session while its queue has room. A voice frame the encoder has not made yet is waited for as
 // long as the air can spare: once less than the provider's lead plus one more chunk is queued, silence goes instead
 static void tx_fill(void *ctx)
 {
 	nxdn_engine_t *e = ctx;
+#if CONFIG_NXDN_DATA
+	if (e->data_sending) {
+		data_fill(e);
+		return;
+	}
+#endif
 	const hal_air_t *air = e->session.air;
 	uint16_t lead = (uint16_t)(((uint32_t)air->tx_lead_ms * e->mode->profile.sym_rate) / 1000 + air->tx_chunk_syms);
 
@@ -168,7 +297,28 @@ static void tx_fill(void *ctx)
 	}
 }
 
-static const air_session_ops_t ops = { tx_fill, NULL };
+#if CONFIG_NXDN_DATA
+static void tx_done(void *ctx)
+{
+	nxdn_engine_t *e = ctx;
+
+	// A partial receive cannot continue across a local transmission.
+	e->data_rx.blocks = 0;
+	if (e->data_sending) {
+		bool complete = e->session.finished && nxdn_engine_data_queued(e) &&
+			e->session.stats.tx_chunks_started != e->data_starts &&
+			e->session.stats.tx_underruns == e->data_underruns;
+		data_result(e, complete ? NXDN_DATA_TX_COMPLETED : NXDN_DATA_TX_FAILED);
+	}
+}
+#endif
+
+static const air_session_ops_t ops = {
+	.tx_fill = tx_fill,
+#if CONFIG_NXDN_DATA
+	.tx_done = tx_done,
+#endif
+};
 
 bool nxdn_engine_begin(nxdn_engine_t *e, const hal_air_t *air, const nxdn_engine_cfg_t *cfg,
 		       const nxdn_engine_hooks_t *hooks, void *ctx)
@@ -179,6 +329,13 @@ bool nxdn_engine_begin(nxdn_engine_t *e, const hal_air_t *air, const nxdn_engine
 	e->ctx = ctx;
 	e->mode = nxdn_engine_mode(cfg->rate9600);
 	nxdn_call_rx_init(&e->rx, cfg->rx_ran, &sink, e);
+#if CONFIG_NXDN_DATA
+	e->voice_frame = e->rx.rx.frame;
+	e->voice_lost = e->rx.rx.lost;
+	e->rx.rx.frame = engine_frame;
+	e->rx.rx.lost = engine_lost;
+	e->rx.rx.ctx = e;
+#endif
 	return air_session_open(&e->session, air, e->mode, &e->rx.rx, e->frame, e->soft, NXDN_FRAME_SYMS, &ops, e);
 }
 
@@ -190,6 +347,9 @@ void nxdn_engine_end(nxdn_engine_t *e)
 void nxdn_engine_retuned(nxdn_engine_t *e)
 {
 	air_session_retuned(&e->session);
+#if CONFIG_NXDN_DATA
+	e->data_rx.blocks = 0;
+#endif
 }
 
 void nxdn_engine_set(nxdn_engine_t *e, const nxdn_engine_cfg_t *cfg)
@@ -211,6 +371,10 @@ bool nxdn_engine_tx_prepare(nxdn_engine_t *e)
 
 	if (cfg->tx_inhibit)
 		return false;
+#if CONFIG_NXDN_DATA
+	if (e->data_sending)
+		return cfg->tx_cipher == NXDN_CIPHER_NONE && air_session_tx_prime(&e->session);
+#endif
 	uint16_t key = key_for(e, cipher, id);
 	if (cipher != NXDN_CIPHER_NONE && !key)
 		return false;
@@ -238,19 +402,34 @@ bool nxdn_engine_tx_prepare(nxdn_engine_t *e)
 
 bool nxdn_engine_tx_go(nxdn_engine_t *e)
 {
-	if (!air_session_tx_go(&e->session))
+	if (!air_session_tx_go(&e->session)) {
+#if CONFIG_NXDN_DATA
+		if (e->data_sending)
+			data_result(e, NXDN_DATA_TX_FAILED);
+#endif
 		return false;
+	}
 	e->view.tx_calls++;
 	return true;
 }
 
 void nxdn_engine_tx_stop(nxdn_engine_t *e)
 {
+#if CONFIG_NXDN_DATA
+	if (e->data_sending) {
+		nxdn_engine_tx_abort(e);
+		return;
+	}
+#endif
 	e->tx_stop = true;
 }
 
 void nxdn_engine_tx_abort(nxdn_engine_t *e)
 {
+#if CONFIG_NXDN_DATA
+	if (e->data_sending)
+		data_result(e, NXDN_DATA_TX_FAILED);
+#endif
 	air_session_tx_abort(&e->session);
 }
 
@@ -262,6 +441,10 @@ air_tx_state_t nxdn_engine_tx_state(const nxdn_engine_t *e)
 void nxdn_engine_tx_clear(nxdn_engine_t *e)
 {
 	air_session_tx_clear(&e->session);
+#if CONFIG_NXDN_DATA
+	if (air_session_tx_state(&e->session) == AIR_TX_IDLE)
+		e->data_sending = false;
+#endif
 }
 
 void nxdn_engine_view(const nxdn_engine_t *e, nxdn_engine_view_t *out)

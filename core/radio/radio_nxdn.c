@@ -41,8 +41,87 @@ static nxdn_call_stats_t call_base;	// the call layer's counters already counted
 static air_session_stats_t air_base;
 static uint32_t rx_calls_base, tx_calls_base, filler_base, rejects_base;
 
+#if CONFIG_NXDN_DATA
+static radio_nxdn_data_t data_rx;
+static bool data_ready;
+
+static void data_received(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600, void *ctx)
+{
+	(void)ctx;
+	if (__atomic_load_n(&data_ready, __ATOMIC_ACQUIRE))
+		return;
+	data_rx.src = packet->address.src;
+	data_rx.dst = packet->address.dst;
+	data_rx.call_type = packet->address.call_type;
+	data_rx.ran = packet->ran;
+	data_rx.direction = packet->direction;
+	data_rx.blocks = packet->received;
+	memcpy(data_rx.bytes, packet->bytes, length);
+	memset(data_rx.bytes + length, 0, sizeof data_rx.bytes - length);
+	data_rx.length = length;
+	data_rx.rate9600 = rate9600;
+	__atomic_store_n(&data_ready, true, __ATOMIC_RELEASE);
+}
+
+bool radio_nxdn_data_pop(radio_nxdn_data_t *out)
+{
+	if (!__atomic_load_n(&data_ready, __ATOMIC_ACQUIRE))
+		return false;
+	*out = data_rx;
+	__atomic_store_n(&data_ready, false, __ATOMIC_RELEASE);
+	return true;
+}
+
+// Both staging and result consumption belong to the radio task. A tracked result stays
+// available until consumed, even if the engine is cleared or the channel changes.
+static uint32_t data_ticket, last_data_ticket;
+static nxdn_data_tx_result_t terminal_data_result;
+
+bool radio_nxdn_data_stage(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group,
+			   uint16_t head_delay_frames)
+{
+	return !data_ticket && eng &&
+		nxdn_engine_data_stage(eng, bytes, length, dst, group, head_delay_frames);
+}
+
+uint32_t radio_nxdn_data_track_tx(void)
+{
+	if (++last_data_ticket == 0)
+		++last_data_ticket;
+	terminal_data_result = NXDN_DATA_TX_PENDING;
+	return data_ticket = last_data_ticket;
+}
+
+static void retain_data_result(bool closing)
+{
+	if (data_ticket && terminal_data_result == NXDN_DATA_TX_PENDING) {
+		terminal_data_result = nxdn_engine_data_result(eng);
+		if (closing && terminal_data_result == NXDN_DATA_TX_PENDING)
+			terminal_data_result = NXDN_DATA_TX_FAILED;
+	}
+}
+
+bool radio_nxdn_data_take_tx_result(uint32_t ticket, radio_nxdn_data_tx_result_t *result)
+{
+	if (!ticket || ticket != data_ticket || !result)
+		return false;
+	if (eng)
+		retain_data_result(false);
+	if (terminal_data_result == NXDN_DATA_TX_PENDING)
+		return false;
+	*result = terminal_data_result == NXDN_DATA_TX_COMPLETED ?
+		RADIO_NXDN_DATA_COMPLETED : RADIO_NXDN_DATA_FAILED;
+	data_ticket = 0;
+	return true;
+}
+#endif
+
 void radio_nxdn_init(void)
 {
+#if CONFIG_NXDN_DATA
+	__atomic_store_n(&data_ready, false, __ATOMIC_RELAXED);
+	data_ticket = 0;
+#endif
 	set = defaults;
 	eng = NULL;
 }
@@ -182,9 +261,12 @@ static uint16_t v_key(uint8_t system, uint8_t cipher, uint8_t id, void *ctx)
 #endif
 
 static const nxdn_engine_hooks_t voice_hooks = {
-	v_start, NULL, v_voice, v_end, v_tx,
+#if CONFIG_NXDN_DATA
+	.data_received = data_received,
+#endif
+	.rx_start = v_start, .rx_voice = v_voice, .rx_end = v_end, .tx_voice = v_tx,
 #if CONFIG_NXDN_SCRAMBLER
-	v_key,
+	.traffic_key = v_key,
 #endif
 };
 
@@ -243,6 +325,9 @@ void radio_nxdn_end(void)
 {
 	if (eng == NULL)
 		return;
+#if CONFIG_NXDN_DATA
+	retain_data_result(true);
+#endif
 	nxdn_engine_end(eng);	// the provider closed: no hook runs after this
 	ambeVoiceStop();
 	eng = NULL;
@@ -388,6 +473,10 @@ static bool nxdn_tx_prepare(void)
 {
 	if (eng == NULL || !nxdn_engine_tx_prepare(eng))
 		return false;
+#if CONFIG_NXDN_DATA
+	if (eng->data_sending)
+		return true;
+#endif
 	voice_tx(true);
 	return true;
 }
@@ -422,6 +511,10 @@ static void nxdn_tx_clear(void)
 {
 	if (eng != NULL) {
 		voice_tx(false);
+#if CONFIG_NXDN_DATA
+		if (eng->data_sending)
+			retain_data_result(false);
+#endif
 		nxdn_engine_tx_clear(eng);
 	}
 }

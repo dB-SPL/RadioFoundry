@@ -343,6 +343,9 @@
 #ifndef CONFIG_NXDN
 #define CONFIG_NXDN			0
 #endif
+#ifndef CONFIG_NXDN_DATA
+#define CONFIG_NXDN_DATA		0
+#endif
 #ifndef CONFIG_NXDN_SCRAMBLER
 #define CONFIG_NXDN_SCRAMBLER		0
 #endif
@@ -569,6 +572,10 @@
 #if CONFIG_P25_TRUNK && !CONFIG_P25
 #error "CONFIG_P25_TRUNK needs CONFIG_P25"
 #endif
+#if CONFIG_NXDN_DATA && !CONFIG_NXDN
+#error "CONFIG_NXDN_DATA needs CONFIG_NXDN"
+#endif
+
 #if CONFIG_NXDN && !CONFIG_DMR
 #error "CONFIG_NXDN needs CONFIG_DMR (its voice is the DMR vocoder's)"
 #endif

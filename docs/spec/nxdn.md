@@ -22,7 +22,7 @@ State:
 | Channel editor on the radio | written, host tested: RAN, rate, group, unit ID ([ui.md](ui.md) 2.1) |
 | On air | transmit checked off air on a radio at both rates (`test_nxdn_tx_off_air`); receive checked at both rates with a bench transmitter, speech frames through the vocoder included (`test_nxdn_rx_from_bench`, `test_nxdn_rx_speech`); the sound at the speaker checked by ear on the HR_C6000 radios, where it goes through the prompt FIFO ([gotchas.md](gotchas.md) 1.14) |
 | NXDN Scrambler, 4800 and 9600 EHR | implemented and host tested; [checked on air](../feature-matrix.md) against another radio running RadioFoundry and a commercial portable |
-| 9600 bit/s full-rate voice (EFR), data, trunking, DES and AES | not written (10). Unsupported encrypted calls are recognized and not played |
+| 9600 bit/s full-rate voice (EFR), trunking, DES and AES | not written (10). Unsupported encrypted calls are recognized and not played |
 
 ## 1. On air
 
@@ -58,7 +58,7 @@ channel's frames are RDCH (`10`).
 | `00` | SACCH non-superframe: a call's first and last frames |
 | `10` | SACCH superframe: a call's voice frames; four make a superframe |
 | `11` | SACCH superframe whose FACCH1 frame is idle (9600 bit/s, TS 1-B 4.1.2.1) |
-| `01` | UDCH (data): refused |
+| `01` | UDCH or FACCH2 with [NXDN data transport](nxdn-data.md) enabled |
 
 | Steal option | VCH 1-2 | VCH 3-4 |
 |---|---|---|
@@ -106,7 +106,7 @@ A 10-symbol pattern turns up in noise and in payload, so the head hook decides w
 
 | Case | Result |
 |---|---|
-| LICH parity holds, RDCH, not UDCH, at most one LICH symbol inner | the frame is taken; the SACCH is decoded |
+| LICH parity holds, RDCH voice frame, at most one LICH symbol inner | the frame is taken; the SACCH is decoded |
 | SACCH CRC holds and its RAN is not ours (unless ours is 0) | refused, counted (`ran_rejects`): another system on the channel |
 | LICH lost inside a call's superframes | up to two frames in a row are placed by the call's order |
 | Five frames without a sync (N7) | the signal is lost |
@@ -307,7 +307,9 @@ its CRC and frame whitening against the clauses. The NXDN Scrambler uses the pub
 | A board's transmit pulse | the provider's shaping at the profile's symbol rate and deviation, as its fit reports (`AIR_FIT_SHAPE_APPROX`, `AIR_FIT_DEV_APPROX`); whether a receiver of another make takes it is untested | 3.4, 3.5 |
 | Voice on air | the VCH bit order is settled against 7.2.1 (5); [manual on-air scrambler interoperability checked](../feature-matrix.md) | 7.2 |
 
+See [NXDN data transport](nxdn-data.md) for the experimental conventional data switch.
+
 ## 10. Not written
 
-Changing an NXDN channel's squelch on the radio, 9600 bit/s full rate, data (UDCH, short data), trunking (RCCH), status and other supplementary messages,
+Changing an NXDN channel's squelch on the radio, 9600 bit/s full rate, trunked short data and additional conventional data profiles, trunking (RCCH), status and other supplementary messages,
 DES and AES encryption, a transmit filter in a provider.

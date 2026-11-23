@@ -192,9 +192,9 @@ static uint16_t h_key(uint8_t system, uint8_t cipher, uint8_t id, void *ctx)
 }
 #endif
 static const nxdn_engine_hooks_t hooks = {
-	h_start, h_update, h_voice, h_end, h_tx_voice,
+	.rx_start = h_start, .rx_update = h_update, .rx_voice = h_voice, .rx_end = h_end, .tx_voice = h_tx_voice,
 #if CONFIG_NXDN_SCRAMBLER
-	h_key,
+	.traffic_key = h_key,
 #endif
 };
 
@@ -744,6 +744,58 @@ static void testSoftModem(void)
 	       last_whole >= 0 ? sigmas[last_whole] : -1.0, last_found >= 0 ? sigmas[last_found] : -1.0);
 }
 
+#if CONFIG_NXDN_DATA
+static const uint8_t data_bytes[] = { 0x00, 0xFF, 0x20, 0x81 };
+static unsigned data_deliveries;
+
+static void received_data(const nxdn_data_packet_t *packet, uint16_t length, bool rate9600, void *ctx)
+{
+	(void)ctx;
+	data_deliveries++;
+	CHECK(length == sizeof data_bytes && memcmp(packet->bytes, data_bytes, length) == 0,
+	      "data engine bytes at rate %u", rate9600 ? 9600 : 4800);
+}
+
+static void testDataCall(bool rate9600, uint16_t delay)
+{
+	nxdn_engine_cfg_t cfg = base_cfg(rate9600);
+
+	cfg.rx_gid = 77;
+	cfg.tx_dst = 88;
+	begin(0, &cfg, &hooks);
+	begin(1, &cfg, &hooks);
+	r[1].e.hooks.data_received = received_data;
+	data_deliveries = 0;
+	CHECK(!nxdn_engine_data_stage(&r[0].e, data_bytes, sizeof data_bytes, NXDN_ID_ALL, true,
+				      NXDN_DATA_MAX_HEAD_DELAY + 1), "reject a countdown that cannot be encoded");
+	CHECK(nxdn_engine_data_stage(&r[0].e, data_bytes, sizeof data_bytes, NXDN_ID_ALL, true, delay), "stage data");
+	CHECK(!nxdn_engine_data_stage_to(&r[0].e, data_bytes, 1, 77, true), "reject overwrite before prime");
+	CHECK(nxdn_engine_tx_prepare(&r[0].e), "prime data");
+	CHECK(nxdn_engine_tx_go(&r[0].e), "start data");
+	CHECK(nxdn_engine_data_result(&r[0].e) == NXDN_DATA_TX_PENDING, "start has no terminal result");
+	steps(60);
+	CHECK(nxdn_engine_tx_state(&r[0].e) == AIR_TX_DONE, "data TX done");
+	CHECK(r[0].e.session.stats.tx_syms ==
+	      NXDN_PREAMBLE_SYMS + (delay + r[0].e.data_tx.packet.blocks + 2u) * NXDN_FRAME_SYMS,
+	      "data burst includes exactly %u delay frames", delay);
+	CHECK(nxdn_engine_data_result(&r[0].e) == NXDN_DATA_TX_COMPLETED, "successful provider completion");
+	CHECK(data_deliveries == 1 && r[1].starts == 0, "one data delivery and no voice");
+	nxdn_engine_tx_clear(&r[0].e);
+	CHECK(nxdn_engine_data_stage_to(&r[0].e, data_bytes, sizeof data_bytes, 77, true), "stage new request");
+	CHECK(nxdn_engine_tx_prepare(&r[0].e) && nxdn_engine_tx_go(&r[0].e), "start request to abort");
+	nxdn_engine_tx_abort(&r[0].e);
+	CHECK(nxdn_engine_data_result(&r[0].e) == NXDN_DATA_TX_FAILED, "abort cannot complete");
+	nxdn_engine_tx_clear(&r[0].e);
+	CHECK(nxdn_engine_data_stage_to(&r[0].e, data_bytes, sizeof data_bytes, 77, true), "stage request with underrun");
+	CHECK(nxdn_engine_tx_prepare(&r[0].e) && nxdn_engine_tx_go(&r[0].e), "start request with underrun");
+	ev(&prov[0], AIR_EV_TX_UNDERRUN, NULL);
+	steps(60);
+	CHECK(nxdn_engine_data_result(&r[0].e) == NXDN_DATA_TX_FAILED, "underrun cannot complete");
+	nxdn_engine_end(&r[1].e);
+	nxdn_engine_end(&r[0].e);
+}
+#endif
+
 int main(void)
 {
 	testSystemKeys(false);
@@ -752,6 +804,10 @@ int main(void)
 	testCall(true);
 	testSquelch();
 	testSoftModem();
+#if CONFIG_NXDN_DATA
+	testDataCall(false, 0);
+	testDataCall(true, 10);
+#endif
 	printf("nxdnEngineTest: %d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;
 }

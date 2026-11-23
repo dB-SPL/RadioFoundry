@@ -604,6 +604,17 @@ typedef struct {
 extern radio_t3_view_t radio_t3v;
 void radio_sm_t3_brief(radio_sm_t *sm);
 #endif
+
+#if CONFIG_NXDN_DATA
+// Radio task only. True means the unconfirmed binary burst was started locally.
+// A non-NULL ticket is written only on success. Consume its result before the next send.
+bool radio_sm_nxdn_data_ex(radio_sm_t *sm, const uint8_t *bytes, uint16_t length,
+			  uint16_t dst, bool group, uint16_t head_delay_frames,
+			  uint32_t now_ms, uint32_t *ticket);
+bool radio_sm_nxdn_data(radio_sm_t *sm, const uint8_t *bytes, uint16_t length,
+		       uint16_t dst, bool group, uint32_t now_ms);
+#endif
+
 void radio_sm_init(radio_sm_t *sm, uint32_t now_ms);
 void radio_sm_request(radio_sm_t *sm, const radio_req_t *req, uint32_t now_ms);
 // Every RADIO_POLL_MS: status, squelch, audio, LEDs, TX time-out

@@ -56,11 +56,12 @@ static void on_event(const air_event_t *ev, void *ctx)
 	case AIR_EV_TX_DONE:
 		if (s->tx == AIR_TX_IDLE)
 			break;
-		s->tx = AIR_TX_DONE;
 		// What was on the channel while we sent is not a continuation of what was there before
 		air_framer_rx_reset(&s->fr);
 		if (s->ops.tx_done)
 			s->ops.tx_done(s->ctx);
+		// Publish DONE after mode-specific completion is available to the owner.
+		s->tx = AIR_TX_DONE;
 		break;
 	default:
 		break;

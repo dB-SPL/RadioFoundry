@@ -9489,10 +9489,64 @@ static void test_nxdn_system(void)
 }
 #endif
 
+#if CONFIG_NXDN_DATA
+static void test_nxdn_data(void)
+{
+	static const uint8_t payload[] = { 0, 0x80, 0xFF, 0x20 };
+	radio_nxdn_data_t got;
+	radio_nxdn_data_tx_result_t result;
+	uint32_t ticket = 0, rejected = 0;
+
+	setup_codeplug_nxdn();
+	start();
+	nxdn_defaults();
+	CHECK(!radio_sm_nxdn_data(&sm, payload, sizeof payload, 1, true, 1));
+	req(RREQ_ZONE_POS, 2);
+	nfar_begin(true, 1, 2001, false, 1);
+	run(100);
+	CHECK(radio_sm_nxdn_data_ex(&sm, payload, sizeof payload, 1, true, 10, hal_millis(), &ticket));
+	CHECK(ticket && sm.view.tx_auto && hw.keyed);
+	CHECK(!radio_nxdn_data_take_tx_result(ticket, &result));
+	CHECK(!radio_sm_nxdn_data_ex(&sm, payload, sizeof payload, 1, true, 0, hal_millis(), &rejected));
+	CHECK(rejected == 0);
+	run(800);
+	CHECK(!hw.keyed && sm.view.state == RS_IDLE && !nfar_heard.starts);
+	CHECK(!radio_sm_nxdn_data(&sm, payload, sizeof payload, 1, true, hal_millis()));
+	CHECK(radio_nxdn_data_take_tx_result(ticket, &result) && result == RADIO_NXDN_DATA_COMPLETED);
+	CHECK(!radio_nxdn_data_take_tx_result(ticket, &result));
+
+	uint32_t completed_ticket = ticket;
+	sm.view.tot_s = 1;
+	CHECK(radio_sm_nxdn_data_ex(&sm, payload, sizeof payload, 1, true, 64, hal_millis(), &ticket));
+	CHECK(ticket != completed_ticket && !radio_nxdn_data_take_tx_result(completed_ticket, &result));
+	run(1500);
+	CHECK(!hw.keyed && radio_nxdn_data_take_tx_result(ticket, &result) && result == RADIO_NXDN_DATA_FAILED);
+
+	CHECK(nxdn_engine_data_stage_to(&nfar, payload, sizeof payload, 2, false));
+	CHECK(nxdn_engine_tx_prepare(&nfar) && nxdn_engine_tx_go(&nfar));
+	nfar_tx = true;
+	run(500);
+	CHECK(!radio_nxdn_data_pop(&got));
+
+	CHECK(nxdn_engine_data_stage_to(&nfar, payload, sizeof payload, 1, false));
+	CHECK(nxdn_engine_tx_prepare(&nfar) && nxdn_engine_tx_go(&nfar));
+	nfar_tx = true;
+	run(500);
+	CHECK(radio_nxdn_data_pop(&got));
+	CHECK(got.src == 2001 && got.dst == 1 && got.call_type == NXDN_CALL_INDIVIDUAL &&
+	      got.length == sizeof payload && memcmp(got.bytes, payload, sizeof payload) == 0);
+	CHECK(!radio_nxdn_data_pop(&got));
+	nfar_stop();
+}
+#endif
+
 static void test_nxdn(void)
 {
 	test_nxdn_rx();
 	test_nxdn_tx();
+#if CONFIG_NXDN_DATA
+	test_nxdn_data();
+#endif
 #if CONFIG_NXDN_SCRAMBLER
 	test_nxdn_system();
 #endif

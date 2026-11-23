@@ -6647,7 +6647,7 @@ static void air_stop(radio_sm_t *sm)
 // PTT on an air mode's channel, tx_check passed: the header queued, the transmitter keyed at the channel's power, the
 // provider started (hal_air.h: it keys only inside that). A refusal after the engine began ends at its AIR_TX_DONE
 // in air_tick, which switches off
-static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
+static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz, bool automatic)
 {
 	static const subtone_t none = { TONE_NONE, 0 };
 	const radio_air_ops_t *o = air_ops(sm);
@@ -6668,7 +6668,7 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 		return;
 	}
 	sm->view.state = RS_TX;		// speaker off, red LED on, before keying
-	sm->view.tx_auto = false;
+	sm->view.tx_auto = automatic;
 	sm->view.last_tx_ms = now_ms != 0 ? now_ms : 1;
 	sm->view.tx_deny = TXDENY_NONE;
 	sm->view.tx_elapsed_ms = 0;
@@ -6687,6 +6687,34 @@ static void air_key(radio_sm_t *sm, uint32_t now_ms, uint32_t hz)
 	air_poll(sm);			// the engine's transmit state in the view now, not at the next tick
 	changed(sm);
 }
+
+#if CONFIG_NXDN_DATA
+bool radio_sm_nxdn_data_ex(radio_sm_t *sm, const uint8_t *bytes, uint16_t length,
+			  uint16_t dst, bool group, uint16_t head_delay_frames,
+			  uint32_t now_ms, uint32_t *ticket)
+{
+	if (!nxdn_now(sm) || sm->air_tx || sm->view.state == RS_TX || sm->view.state == RS_TX_DENIED ||
+	    sm->ptt || sm->hotspot || BENCH_HELD(sm) || tx_check(sm) != TXDENY_NONE ||
+	    !radio_nxdn_data_stage(bytes, length, dst, group, head_delay_frames))
+		return false;
+	end_reception(sm, now_ms);
+	air_key(sm, now_ms, sm->view.ch.tx_hz, true);
+	if (sm->view.state != RS_TX) {
+		if (!sm->air_tx)
+			radio_nxdn_air.tx_clear();
+		return false;
+	}
+	if (ticket)
+		*ticket = radio_nxdn_data_track_tx();
+	return true;
+}
+
+bool radio_sm_nxdn_data(radio_sm_t *sm, const uint8_t *bytes, uint16_t length,
+		       uint16_t dst, bool group, uint32_t now_ms)
+{
+	return radio_sm_nxdn_data_ex(sm, bytes, length, dst, group, 0, now_ms, NULL);
+}
+#endif
 
 // The settings sent while it transmitted (RREQ_P25_SET, RREQ_NXDN_SET): the engine takes them now
 static void air_apply(radio_sm_t *sm)
@@ -6769,7 +6797,7 @@ static void __attribute__((noinline)) p25t_tick(radio_sm_t *sm, uint32_t now_ms)
 				deny(sm, TXDENY_BAND);
 			} else {
 				sm->p25_talk = true;
-				air_key(sm, now_ms, hz);
+				air_key(sm, now_ms, hz, false);
 				if (!sm->air_tx) {
 					sm->p25_talk = false;	// refused before the engine began: no AIR_TX_DONE to end it
 					radio_p25_trunk_talk_end();
@@ -6962,7 +6990,7 @@ static void ptt_down(radio_sm_t *sm, uint32_t now_ms)
 		}
 #endif
 		if (!sm->air_tx) {
-			air_key(sm, now_ms, sm->view.ch.tx_hz);
+			air_key(sm, now_ms, sm->view.ch.tx_hz, false);
 		}		// else the last transmission is still ending: air_tick keys again once it is done
 		return;
 	}

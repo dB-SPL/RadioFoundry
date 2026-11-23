@@ -67,6 +67,33 @@ typedef struct {
 
 extern const radio_air_ops_t radio_nxdn_air;
 
+#if CONFIG_NXDN_DATA
+#include "nxdn/nxdn.h"
+
+typedef struct {
+	uint8_t bytes[NXDN_DATA_MAX_BYTES];
+	uint16_t src, dst, length;
+	uint8_t call_type, ran, direction, blocks;
+	bool rate9600;
+} radio_nxdn_data_t;
+
+// Single consumer. A full mailbox preserves the earlier verified packet.
+bool radio_nxdn_data_pop(radio_nxdn_data_t *out);
+// Radio task only. Stage through radio_sm_nxdn_data() to apply normal TX admission.
+bool radio_nxdn_data_stage(const uint8_t *bytes, uint16_t length, uint16_t dst, bool group,
+			   uint16_t head_delay_frames);
+
+typedef enum {
+	RADIO_NXDN_DATA_COMPLETED,
+	RADIO_NXDN_DATA_FAILED,
+} radio_nxdn_data_tx_result_t;
+
+// Radio task only. Attach a ticket only after local TX starts.
+uint32_t radio_nxdn_data_track_tx(void);
+// Consume the terminal result for this nonzero ticket. False means pending or no matching ticket.
+bool radio_nxdn_data_take_tx_result(uint32_t ticket, radio_nxdn_data_tx_result_t *result);
+#endif
+
 void radio_nxdn_init(void);
 // The board's provider gives NXDN something (receive or transmit) at either rate (any task): what the UI and the
 // mode request offer NXDN on
